@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+.env
+production_app.py
+octopus_downloader.py
+test_plugin.py
+TRMNL_Server.py
+Check Octopus API.py
