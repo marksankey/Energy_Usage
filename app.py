@@ -203,9 +203,9 @@ def energy_data():
         # Flattened gas data
         "gas_usage": gas_usage,
         "gas_usage_kwh": gas_usage_kwh,
-        "gas_cost": gas_cost,
-        "gas_standing_charge": STANDING_CHARGE_GAS,
-        "gas_unit_cost": round(gas_usage * GAS_RATE, 2),
+        "gas_cost": f"{gas_cost:.2f}",
+        "gas_standing_charge": f"{STANDING_CHARGE_GAS:.2f}",
+        "gas_unit_cost": f"{gas_usage * GAS_RATE:.2f}",
         
         # Keep nested structure for compatibility with existing /trmnl endpoint
         "electricity": {
