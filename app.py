@@ -178,6 +178,9 @@ def energy_data():
     
     total_cost = round(total_electricity_cost + gas_cost, 2)
     
+    # Convert gas m³ to kWh (using standard conversion factor of ~11.19 kWh per m³)
+    gas_usage_kwh = round(gas_usage * 11.19, 2)
+    
     # Flattened data for TRMNL templating
     response_data = {
         "date": date_str,
@@ -199,6 +202,7 @@ def energy_data():
         
         # Flattened gas data
         "gas_usage": gas_usage,
+        "gas_usage_kwh": gas_usage_kwh,
         "gas_cost": gas_cost,
         "gas_standing_charge": STANDING_CHARGE_GAS,
         "gas_unit_cost": round(gas_usage * GAS_RATE, 2),
