@@ -178,8 +178,32 @@ def energy_data():
     
     total_cost = round(total_electricity_cost + gas_cost, 2)
     
+    # Flattened data for TRMNL templating
     response_data = {
         "date": date_str,
+        "total_cost": total_cost,
+        "currency": "GBP",
+        "timestamp": datetime.now().isoformat(),
+        "mock_data": use_mock,
+        
+        # Flattened electricity data
+        "electricity_total_usage": electricity_data['total_usage'],
+        "electricity_total_cost": total_electricity_cost,
+        "electricity_off_peak_usage": electricity_data['off_peak_usage'],
+        "electricity_off_peak_cost": off_peak_cost,
+        "electricity_off_peak_period": "23:30-05:30",
+        "electricity_peak_usage": electricity_data['peak_usage'],
+        "electricity_peak_cost": peak_cost,
+        "electricity_peak_period": "05:30-23:30",
+        "electricity_standing_charge": STANDING_CHARGE_ELECTRICITY,
+        
+        # Flattened gas data
+        "gas_usage": gas_usage,
+        "gas_cost": gas_cost,
+        "gas_standing_charge": STANDING_CHARGE_GAS,
+        "gas_unit_cost": round(gas_usage * GAS_RATE, 2),
+        
+        # Keep nested structure for compatibility with existing /trmnl endpoint
         "electricity": {
             "off_peak": {
                 "usage": electricity_data['off_peak_usage'],
@@ -204,11 +228,7 @@ def energy_data():
             "cost": gas_cost,
             "standing_charge": STANDING_CHARGE_GAS,
             "unit": "m³"
-        },
-        "total_cost": total_cost,
-        "currency": "GBP",
-        "timestamp": datetime.now().isoformat(),
-        "mock_data": use_mock
+        }
     }
     
     response = jsonify(response_data)
