@@ -205,7 +205,7 @@ def energy_data():
         "gas_usage_kwh": gas_usage_kwh,
         "gas_cost": f"{gas_cost:.2f}",
         "gas_standing_charge": f"{STANDING_CHARGE_GAS:.2f}",
-        "gas_unit_cost": f"{gas_usage * GAS_RATE:.2f}",
+        "gas_unit_cost": f"{gas_unit_cost_kwh:.2f}",
         
         # Keep nested structure for compatibility with existing /trmnl endpoint
         "electricity": {
