@@ -26,6 +26,13 @@ STANDING_CHARGE_GAS = float(os.getenv('STANDING_CHARGE_GAS', '0.2971'))
 
 BASE_URL = "https://api.octopus.energy"
 
+def add_cors_headers(response):
+    """Add CORS headers to response"""
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+    response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+    return response
+
 def get_electricity_usage_by_time(mpan, serial, use_mock=False):
     """Get electricity usage split by off-peak and peak periods"""
     
@@ -155,11 +162,12 @@ def energy_data():
     gas_usage = get_gas_usage(GAS_MPRN, GAS_SERIAL, use_mock)
     
     if electricity_data is None or gas_usage is None:
-        return jsonify({
+        response = jsonify({
             "date": date_str,
             "error": "Failed to fetch data",
             "timestamp": datetime.now().isoformat()
         })
+        return add_cors_headers(response)
     
     # Calculate costs
     off_peak_cost = round(electricity_data['off_peak_usage'] * ELECTRICITY_RATE_OFF_PEAK, 2)
@@ -170,7 +178,7 @@ def energy_data():
     
     total_cost = round(total_electricity_cost + gas_cost, 2)
     
-    return jsonify({
+    response_data = {
         "date": date_str,
         "electricity": {
             "off_peak": {
@@ -201,7 +209,10 @@ def energy_data():
         "currency": "GBP",
         "timestamp": datetime.now().isoformat(),
         "mock_data": use_mock
-    })
+    }
+    
+    response = jsonify(response_data)
+    return add_cors_headers(response)
 
 @app.route('/trmnl')
 def trmnl_display():
@@ -322,16 +333,28 @@ def trmnl_display():
     </html>
     '''
     
-    return html_template.replace('API_URL_PLACEHOLDER', api_url)
+    response = app.make_response(html_template.replace('API_URL_PLACEHOLDER', api_url))
+    return add_cors_headers(response)
 
 @app.route('/health')
 def health_check():
-    return jsonify({
+    response = jsonify({
         "status": "ok", 
         "timestamp": datetime.now().isoformat()
     })
+    return add_cors_headers(response)
+
+# Handle OPTIONS requests for CORS
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = app.make_response("")
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add('Access-Control-Allow-Headers', "*")
+        response.headers.add('Access-Control-Allow-Methods', "*")
+        return response
 
 if __name__ == '__main__':
-    print("Starting TRMNL Octopus Energy Plugin server")
+    print("Starting TRMNL Octopus Energy Plugin server with CORS support")
     port = int(os.environ.get('PORT', 5000))  # Render uses PORT env var
     app.run(host='0.0.0.0', port=port, debug=False)
