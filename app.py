@@ -174,38 +174,38 @@ def energy_data():
     peak_cost = round(electricity_data['peak_usage'] * ELECTRICITY_RATE_PEAK, 2)
     total_electricity_cost = round(off_peak_cost + peak_cost + STANDING_CHARGE_ELECTRICITY, 2)
     
-    # Convert gas m³ to kWh and calculate cost properly
-    gas_usage_kwh = round(gas_usage * 11.19, 2)
-    gas_unit_cost_kwh = round(gas_usage_kwh * GAS_RATE, 2)
-    gas_cost = round(gas_unit_cost_kwh + STANDING_CHARGE_GAS, 2)
+    gas_cost = round(gas_usage * GAS_RATE + STANDING_CHARGE_GAS, 2)
     
     total_cost = round(total_electricity_cost + gas_cost, 2)
+    
+    # Convert gas m³ to kWh (using standard conversion factor of ~11.19 kWh per m³)
+    gas_usage_kwh = round(gas_usage * 11.19, 2)
     
     # Flattened data for TRMNL templating
     response_data = {
         "date": date_str,
-        "total_cost": f"{total_cost:.2f}",
+        "total_cost": total_cost,
         "currency": "GBP",
         "timestamp": datetime.now().isoformat(),
         "mock_data": use_mock,
         
         # Flattened electricity data
-        "electricity_total_usage": f"{electricity_data['total_usage']:.2f}",
-        "electricity_total_cost": f"{total_electricity_cost:.2f}",
-        "electricity_off_peak_usage": f"{electricity_data['off_peak_usage']:.2f}",
-        "electricity_off_peak_cost": f"{off_peak_cost:.2f}",
+        "electricity_total_usage": electricity_data['total_usage'],
+        "electricity_total_cost": total_electricity_cost,
+        "electricity_off_peak_usage": electricity_data['off_peak_usage'],
+        "electricity_off_peak_cost": off_peak_cost,
         "electricity_off_peak_period": "23:30-05:30",
-        "electricity_peak_usage": f"{electricity_data['peak_usage']:.2f}",
-        "electricity_peak_cost": f"{peak_cost:.2f}",
+        "electricity_peak_usage": electricity_data['peak_usage'],
+        "electricity_peak_cost": peak_cost,
         "electricity_peak_period": "05:30-23:30",
-        "electricity_standing_charge": f"{STANDING_CHARGE_ELECTRICITY:.2f}",
+        "electricity_standing_charge": STANDING_CHARGE_ELECTRICITY,
         
         # Flattened gas data
-        "gas_usage": f"{gas_usage:.2f}",
-        "gas_usage_kwh": f"{gas_usage_kwh:.2f}",
+        "gas_usage": gas_usage,
+        "gas_usage_kwh": gas_usage_kwh,
         "gas_cost": f"{gas_cost:.2f}",
         "gas_standing_charge": f"{STANDING_CHARGE_GAS:.2f}",
-        "gas_unit_cost": f"{gas_unit_cost_kwh:.2f}",
+        "gas_unit_cost": f"{gas_usage * GAS_RATE:.2f}",
         
         # Keep nested structure for compatibility with existing /trmnl endpoint
         "electricity": {
