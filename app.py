@@ -174,7 +174,10 @@ def energy_data():
     peak_cost = round(electricity_data['peak_usage'] * ELECTRICITY_RATE_PEAK, 2)
     total_electricity_cost = round(off_peak_cost + peak_cost + STANDING_CHARGE_ELECTRICITY, 2)
     
-    gas_cost = round(gas_usage * GAS_RATE + STANDING_CHARGE_GAS, 2)
+   # old line gas_cost = round(gas_usage * GAS_RATE + STANDING_CHARGE_GAS, 2)
+
+    gas_usage_kwh = gas_usage * 11.19  # Convert m³ to kWh
+    gas_cost = round(gas_usage_kwh * GAS_RATE + STANDING_CHARGE_GAS, 2)
     
     total_cost = round(total_electricity_cost + gas_cost, 2)
     
