@@ -525,10 +525,11 @@ def trmnl_display():
         'smart_charging_savings': f"{smart_charging_savings:.2f}",
         'smart_charging_active': electricity_data['smart_charging_usage'] > 0,
         
-        # Gas data
-        'gas_usage': gas_usage,
-        'gas_cost': f"{gas_cost:.2f}",
-        'gas_standing_charge': f"{STANDING_CHARGE_GAS:.2f}",
+    # Gas data
+    'gas_usage': gas_usage,
+    'gas_usage_kwh': f"{gas_usage * 11.2:.1f}",  # ADD THIS LINE
+    'gas_cost': f"{gas_cost:.2f}",
+    'gas_standing_charge': f"{STANDING_CHARGE_GAS:.2f}",
         
         # Totals
         'total_cost': f"{total_cost:.2f}",
