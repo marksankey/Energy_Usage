@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template_string
 import requests
 from datetime import datetime, timedelta
 import os
@@ -470,166 +470,161 @@ def energy_data():
 
 @app.route('/trmnl')
 def trmnl_display():
-    use_mock = request.args.get('mock', 'false')
-    api_url = '/api/energy?mock=' + use_mock if use_mock == 'true' else '/api/energy'
+    """Enhanced TRMNL display with Intelligent Octopus Go features"""
+    use_mock = request.args.get('mock', 'false').lower() == 'true'
     
-    html_template = '''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <title>Energy Usage - Intelligent Octopus Go</title>
-        <style>
-            body { 
-                font-family: monospace;
-                margin: 15px; 
-                background: white;
-                color: black;
-                font-size: 16px;
-            }
-            .header { 
-                font-size: 24px; 
-                font-weight: bold; 
-                margin-bottom: 15px; 
-                text-align: center;
-                border-bottom: 2px solid black;
-                padding-bottom: 8px;
-            }
-            .date {
-                text-align: center; 
-                margin-bottom: 20px; 
-                font-size: 14px;
-            }
-            .section { 
-                margin: 15px 0; 
-                border: 1px solid #ddd;
-                padding: 10px;
-                border-radius: 5px;
-            }
-            .section-title {
-                font-weight: bold;
-                margin-bottom: 8px;
-                font-size: 18px;
-            }
-            .usage-row { 
-                display: flex;
-                justify-content: space-between;
-                margin: 5px 0;
-                font-size: 14px;
-            }
-            .smart-charging-row {
-                display: flex;
-                justify-content: space-between;
-                margin: 5px 0;
-                font-size: 14px;
-                background-color: #e8f5e8;
-                padding: 3px;
-                border-radius: 3px;
-            }
-            .total-row {
-                display: flex;
-                justify-content: space-between;
-                margin: 8px 0;
-                font-weight: bold;
-                border-top: 1px solid #ccc;
-                padding-top: 5px;
-            }
-            .grand-total { 
-                margin-top: 20px; 
-                font-size: 20px; 
-                font-weight: bold; 
-                text-align: center;
-                border-top: 2px solid black;
-                padding-top: 15px;
-            }
-            .savings-highlight {
-                background-color: #d4edda;
-                padding: 8px;
-                border-radius: 5px;
-                margin: 10px 0;
-                text-align: center;
-                font-weight: bold;
-                color: #155724;
-            }
-            .footer {
-                text-align: center; 
-                font-size: 11px; 
-                margin-top: 15px;
-                color: #666;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="header">Energy Usage</div>
-        <div id="content">Loading...</div>
+    yesterday = datetime.now() - timedelta(days=1)
+    date_str = yesterday.strftime("%d %b %Y")
+    
+    electricity_data = get_electricity_usage_by_time(ELECTRICITY_MPAN, ELECTRICITY_SERIAL, use_mock)
+    gas_usage = get_gas_usage(GAS_MPRN, GAS_SERIAL, use_mock)
+    
+    if electricity_data is None or gas_usage is None:
+        # Return error template
+        return render_template_string('''
+        <div class="layout layout--col">
+            <div class="text--center">
+                <div class="content">
+                    <span class="title">❌ Error</span>
+                    <span class="value">Failed to fetch data</span>
+                    <span class="label">Check API connection</span>
+                </div>
+            </div>
+        </div>
+        <div class="title_bar">
+            <span class="title">Energy Usage - {{ date }}</span>
+        </div>
+        ''', date=date_str)
+    
+    # Calculate costs
+    off_peak_cost = round(electricity_data['off_peak_usage'] * ELECTRICITY_RATE_OFF_PEAK, 2)
+    peak_cost = round(electricity_data['peak_usage'] * ELECTRICITY_RATE_PEAK, 2)
+    smart_charging_cost = round(electricity_data['smart_charging_usage'] * ELECTRICITY_RATE_OFF_PEAK, 2)
+    total_electricity_cost = round(off_peak_cost + peak_cost + smart_charging_cost + STANDING_CHARGE_ELECTRICITY, 2)
+    
+    gas_cost = round(gas_usage * GAS_RATE + STANDING_CHARGE_GAS, 2)
+    total_cost = round(total_electricity_cost + gas_cost, 2)
+    
+    # Calculate smart charging savings
+    smart_charging_savings = round(electricity_data['smart_charging_usage'] * (ELECTRICITY_RATE_PEAK - ELECTRICITY_RATE_OFF_PEAK), 2)
+    
+    # Template variables
+    template_vars = {
+        'date': date_str,
         
-        <script>
-            fetch('API_URL_PLACEHOLDER')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        document.getElementById('content').innerHTML = '<div style="text-align: center; color: red;">Error: ' + data.error + '</div>';
-                        return;
-                    }
-                    
-                    const elec = data.electricity;
-                    const gas = data.gas;
-                    const intelligent = data.intelligent_features;
-                    
-                    let content = '<div class="date">' + data.date + '</div>';
-                    
-                    // Electricity section
-                    content += '<div class="section">' +
-                        '<div class="section-title">⚡ Electricity</div>' +
-                        '<div class="usage-row"><span>Off-Peak (' + elec.off_peak.period + '):</span><span>' + elec.off_peak.usage + ' kWh (£' + elec.off_peak.cost.toFixed(2) + ')</span></div>' +
-                        '<div class="usage-row"><span>Peak (' + elec.peak.period + '):</span><span>' + elec.peak.usage + ' kWh (£' + elec.peak.cost.toFixed(2) + ')</span></div>';
-                    
-                    // Smart charging row - highlighted if active
-                    if (elec.smart_charging.usage > 0) {
-                        content += '<div class="smart-charging-row"><span>🚗 Smart Charging (' + elec.smart_charging.sessions + ' sessions):</span><span>' + elec.smart_charging.usage + ' kWh (£' + elec.smart_charging.cost.toFixed(2) + ')</span></div>';
-                    } else {
-                        content += '<div class="usage-row"><span>🚗 Smart Charging:</span><span>0 kWh (£0.00)</span></div>';
-                    }
-                    
-                    content += '<div class="usage-row"><span>Standing Charge:</span><span>£' + elec.standing_charge.toFixed(2) + '</span></div>' +
-                        '<div class="total-row"><span>Total:</span><span>' + elec.total_usage + ' kWh (£' + elec.total_cost.toFixed(2) + ')</span></div>' +
-                        '</div>';
-                    
-                    // Show savings if smart charging was used
-                    if (elec.smart_charging.savings > 0) {
-                        content += '<div class="savings-highlight">Smart charging saved £' + elec.smart_charging.savings.toFixed(2) + ' today!</div>';
-                    }
-                    
-                    // Gas section
-                    content += '<div class="section">' +
-                        '<div class="section-title">🔥 Gas</div>' +
-                        '<div class="usage-row"><span>Usage:</span><span>' + gas.usage + ' m³</span></div>' +
-                        '<div class="usage-row"><span>Unit Cost:</span><span>£' + (gas.cost - gas.standing_charge).toFixed(2) + '</span></div>' +
-                        '<div class="usage-row"><span>Standing Charge:</span><span>£' + gas.standing_charge.toFixed(2) + '</span></div>' +
-                        '<div class="total-row"><span>Total:</span><span>£' + gas.cost.toFixed(2) + '</span></div>' +
-                        '</div>';
-                    
-                    // Grand total
-                    content += '<div class="grand-total">Daily Total: £' + data.total_cost.toFixed(2) + '</div>';
-                    
-                    // Footer with intelligent features info
-                    let footerText = data.mock_data ? 'Mock Data' : 'Live Data';
-                    if (intelligent.dispatch_periods_found > 0) {
-                        footerText += ' • ' + intelligent.dispatch_periods_found + ' dispatches found';
-                    }
-                    content += '<div class="footer">' + footerText + '</div>';
-                    
-                    document.getElementById('content').innerHTML = content;
-                })
-                .catch(error => {
-                    document.getElementById('content').innerHTML = '<div style="text-align: center; color: red;">Error loading data</div>';
-                });
-        </script>
-    </body>
-    </html>
+        # Electricity data
+        'electricity_total_usage': electricity_data['total_usage'],
+        'electricity_total_cost': f"{total_electricity_cost:.2f}",
+        'electricity_off_peak_usage': electricity_data['off_peak_usage'],
+        'electricity_peak_usage': electricity_data['peak_usage'],
+        'electricity_standing_charge': f"{STANDING_CHARGE_ELECTRICITY:.2f}",
+        
+        # Smart charging data
+        'smart_charging_usage': electricity_data['smart_charging_usage'],
+        'smart_charging_sessions': electricity_data['smart_charging_sessions'],
+        'smart_charging_savings': f"{smart_charging_savings:.2f}",
+        'smart_charging_active': electricity_data['smart_charging_usage'] > 0,
+        
+        # Gas data
+        'gas_usage': gas_usage,
+        'gas_cost': f"{gas_cost:.2f}",
+        'gas_standing_charge': f"{STANDING_CHARGE_GAS:.2f}",
+        
+        # Totals
+        'total_cost': f"{total_cost:.2f}",
+        
+        # Intelligent features
+        'dispatch_periods_found': len(octopus_api.dispatch_periods),
+        
+        # Mock data flag
+        'mock_data': use_mock,
+    }
+    
+    # Enhanced TRMNL template with Intelligent Octopus Go features
+    trmnl_template = '''
+    <div class="layout layout--col">
+      <!-- Smart Charging Savings Alert (if applicable) -->
+      {% if smart_charging_savings|float > 0 %}
+      <div class="text--center" style="background: #e8f5e8; border: 2px solid #4caf50; border-radius: 8px; padding: 12px; margin-bottom: 15px;">
+        <span class="title" style="color: #2e7d32;">🚗 Smart Charging Saved</span>
+        <span class="value" style="color: #1b5e20;">£{{ smart_charging_savings }}</span>
+        <span class="label" style="color: #2e7d32;">vs. peak rate charging</span>
+      </div>
+      {% endif %}
+
+      <!-- Main Energy Data -->
+      <div class="columns text--center">
+        <div class="column">
+          <div class="content">
+            <span class="title">⚡ ELEC</span>
+            <span class="value">{{ electricity_total_usage }} kWh</span>
+            <br>
+            <span class="value">£{{ electricity_total_cost }}</span>
+            
+            <!-- Standard Usage Breakdown -->
+            <span class="label">Off-Peak: {{ electricity_off_peak_usage }} kWh</span>
+            <span class="label">Peak: {{ electricity_peak_usage }} kWh</span>
+            
+            <!-- Smart Charging Row (highlighted if active) -->
+            {% if smart_charging_usage > 0 %}
+            <span class="label" style="background: #e8f5e8; color: #2e7d32; padding: 2px 6px; border-radius: 4px; font-weight: bold;">
+              🚗 Smart: {{ smart_charging_usage }} kWh ({{ smart_charging_sessions }} sessions)
+            </span>
+            {% else %}
+            <span class="label" style="color: #999;">🚗 Smart: 0 kWh</span>
+            {% endif %}
+            
+            <span class="label">Standing: £{{ electricity_standing_charge }}</span>
+          </div>
+        </div>
+        
+        <div class="column">
+          <div class="content">
+            <span class="title">🔥 GAS</span>
+            <span class="value">{{ gas_usage }} m³</span>
+            <br>
+            <span class="value">£{{ gas_cost }}</span>
+            <span class="label">Standing: £{{ gas_standing_charge }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Daily Totals Section -->
+      <div>&nbsp;</div>
+      <div class="columns text--center">
+        <div class="column">
+          <div class="content">
+            <span class="title">💷 Daily Total</span>
+            <span class="value">£{{ total_cost }}</span>
+          </div>
+        </div>
+        <div class="column">
+          <div class="content">
+            <span class="title">🚗 EV Sessions</span>
+            <span class="value">{{ smart_charging_sessions }}</span>
+            {% if dispatch_periods_found > 0 %}
+            <span class="label">{{ dispatch_periods_found }} dispatches found</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Enhanced Title Bar with Smart Charging Status -->
+    <div class="title_bar">
+      <span class="title">
+        Energy Usage - {{ date }}
+        {% if smart_charging_active %}
+        🚗
+        {% endif %}
+        {% if mock_data %}
+        🧪
+        {% endif %}
+      </span>
+    </div>
     '''
     
-    return html_template.replace('API_URL_PLACEHOLDER', api_url)
+    return render_template_string(trmnl_template, **template_vars)
 
 @app.route('/health')
 def health_check():
