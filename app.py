@@ -323,6 +323,76 @@ def health():
     """Health check endpoint"""
     return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
 
+@app.route('/diagnose')
+def diagnose():
+    """Diagnostic route to check API calls and data"""
+    date = get_yesterday_date()
+    
+    # Test API credentials and endpoints
+    results = {
+        'date': date,
+        'config': {
+            'api_key_set': bool(API_KEY and API_KEY != 'sk_live_your_api_key_here'),
+            'api_key_length': len(API_KEY) if API_KEY else 0,
+            'electricity_mpan': ELECTRICITY_MPAN,
+            'electricity_serial': ELECTRICITY_SERIAL,
+            'gas_mprn': GAS_MPRN,
+            'gas_serial': GAS_SERIAL
+        }
+    }
+    
+    # Test electricity API call
+    try:
+        elec_url = f"https://api.octopus.energy/v1/electricity-meter-points/{ELECTRICITY_MPAN}/meters/{ELECTRICITY_SERIAL}/consumption/"
+        elec_params = {
+            'period_from': f"{date}T00:00:00Z",
+            'period_to': f"{date}T23:59:59Z",
+            'page_size': 200
+        }
+        elec_response = requests.get(elec_url, params=elec_params, auth=(API_KEY, ''), timeout=30)
+        results['electricity_api'] = {
+            'status_code': elec_response.status_code,
+            'success': elec_response.status_code == 200,
+            'url': elec_url,
+            'response_text': elec_response.text[:500] if elec_response.text else None
+        }
+        if elec_response.status_code == 200:
+            elec_data = elec_response.json()
+            results['electricity_api']['data_points'] = len(elec_data.get('results', []))
+            results['electricity_api']['sample_data'] = elec_data.get('results', [])[:2]  # First 2 records
+    except Exception as e:
+        results['electricity_api'] = {
+            'success': False,
+            'error': str(e)
+        }
+    
+    # Test gas API call
+    try:
+        gas_url = f"https://api.octopus.energy/v1/gas-meter-points/{GAS_MPRN}/meters/{GAS_SERIAL}/consumption/"
+        gas_params = {
+            'period_from': f"{date}T00:00:00Z",
+            'period_to': f"{date}T23:59:59Z",
+            'page_size': 200
+        }
+        gas_response = requests.get(gas_url, params=gas_params, auth=(API_KEY, ''), timeout=30)
+        results['gas_api'] = {
+            'status_code': gas_response.status_code,
+            'success': gas_response.status_code == 200,
+            'url': gas_url,
+            'response_text': gas_response.text[:500] if gas_response.text else None
+        }
+        if gas_response.status_code == 200:
+            gas_data = gas_response.json()
+            results['gas_api']['data_points'] = len(gas_data.get('results', []))
+            results['gas_api']['sample_data'] = gas_data.get('results', [])[:2]  # First 2 records
+    except Exception as e:
+        results['gas_api'] = {
+            'success': False,
+            'error': str(e)
+        }
+    
+    return jsonify(results)
+
 if __name__ == '__main__':
     # For local development
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
