@@ -1,618 +1,328 @@
 #!/usr/bin/env python3
+"""
+Enhanced Octopus Energy Usage Tracker for TRMNL
+Fetches electricity and gas consumption data and displays on TRMNL device
+"""
 
-from flask import Flask, jsonify, request
-import requests
-from datetime import datetime, timedelta
 import os
-from dotenv import load_dotenv
+import requests
+import json
+from datetime import datetime, timedelta
+from flask import Flask, render_template_string, jsonify
 import logging
 
-load_dotenv()
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
 # Configuration
-API_KEY = os.getenv('API_KEY', 'sk_live_QzN82iAqzfR09usjYrdYx3lQUkwQWips')
+API_KEY = os.getenv('OCTOPUS_API_KEY', 'sk_live_your_api_key_here')
 ELECTRICITY_MPAN = os.getenv('ELECTRICITY_MPAN', '1610018835487')
-ELECTRICITY_SERIAL = os.getenv('ELECTRICITY_SERIAL', '25L3125760')
+ELECTRICITY_SERIAL = os.getenv('ELECTRICITY_SERIAL', 'your_electricity_serial')
 GAS_MPRN = os.getenv('GAS_MPRN', '1467503405')
-GAS_SERIAL = os.getenv('GAS_SERIAL', 'E6E15302382460')
+GAS_SERIAL = os.getenv('GAS_SERIAL', 'your_gas_serial')
 
-# Octopus Go Tariff Rates
-ELECTRICITY_RATE_PEAK = float(os.getenv('ELECTRICITY_RATE_PEAK', '0.2957'))
-ELECTRICITY_RATE_OFF_PEAK = float(os.getenv('ELECTRICITY_RATE_OFF_PEAK', '0.0700'))
-GAS_RATE = float(os.getenv('GAS_RATE', '0.0626'))
-STANDING_CHARGE_ELECTRICITY = float(os.getenv('STANDING_CHARGE_ELECTRICITY', '0.4734'))
-STANDING_CHARGE_GAS = float(os.getenv('STANDING_CHARGE_GAS', '0.2971'))
+# Constants
+GAS_CONVERSION_FACTOR = 11.1  # kWh per m³ (UK standard)
+ELECTRICITY_STANDING_CHARGE = 0.4702  # £/day
+GAS_STANDING_CHARGE = 0.3058  # £/day
 
-BASE_URL = "https://api.octopus.energy"
-GRAPHQL_URL = "https://api.octopus.energy/v1/graphql"
+# Rate configuration for Octopus Go
+RATES = {
+    'off_peak': 0.075,  # 7.5p/kWh (00:30-04:30)
+    'peak': 0.2494,     # 24.94p/kWh (other times)
+    'smart_charging': 0.075  # 7.5p/kWh (intelligent dispatch)
+}
 
-# Set up logging for production
-logging.basicConfig(level=logging.WARNING)
-logger = logging.getLogger(__name__)
+def get_yesterday_date():
+    """Get yesterday's date in YYYY-MM-DD format"""
+    yesterday = datetime.now() - timedelta(days=1)
+    return yesterday.strftime('%Y-%m-%d')
 
-class IntelligentOctopusAPI:
-    """Enhanced API client with Intelligent Go dispatch support"""
+def get_energy_data():
+    """Get all energy data and process it - unified function for all routes"""
+    date = get_yesterday_date()
     
-    def __init__(self, api_key):
-        self.api_key = api_key
-        self.session = requests.Session()
-        self.session.auth = (api_key, '')
-        self.kraken_token = None
-        self.account_number = None
-        self.dispatch_periods = []
-    
-    def get_kraken_token(self):
-        """Get Kraken token for GraphQL API access"""
-        if self.kraken_token:
-            return self.kraken_token
-            
-        mutation = """
-        mutation obtainKrakenToken($input: ObtainJSONWebTokenInput!) {
-            obtainKrakenToken(input: $input) {
-                token
-            }
+    # Initialize with defaults
+    result = {
+        'date': date,
+        'electricity': {
+            'total_usage': 0,
+            'off_peak_usage': 0,
+            'peak_usage': 0,
+            'smart_charging_usage': 0,
+            'total_cost': 0,
+            'standing_charge': ELECTRICITY_STANDING_CHARGE
+        },
+        'gas': {
+            'usage_m3': 0,
+            'usage_kwh': 0,
+            'cost': 0,
+            'standing_charge': GAS_STANDING_CHARGE
+        },
+        'smart_charging': {
+            'sessions': 0,
+            'savings': 0
+        },
+        'totals': {
+            'daily_cost': ELECTRICITY_STANDING_CHARGE + GAS_STANDING_CHARGE
         }
-        """
-        
-        variables = {
-            "input": {
-                "APIKey": self.api_key
-            }
-        }
-        
-        try:
-            response = requests.post(
-                GRAPHQL_URL,
-                json={"query": mutation, "variables": variables},
-                headers={"Content-Type": "application/json"},
-                timeout=10
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            if "errors" in data:
-                logger.error(f"GraphQL token error: {data['errors']}")
-                return None
-                
-            self.kraken_token = data["data"]["obtainKrakenToken"]["token"]
-            return self.kraken_token
-            
-        except Exception as e:
-            logger.error(f"Error getting Kraken token: {e}")
-            return None
-    
-    def get_account_number(self):
-        """Get account number from GraphQL API"""
-        if self.account_number:
-            return self.account_number
-            
-        token = self.get_kraken_token()
-        if not token:
-            return None
-            
-        query = """
-        query {
-            viewer {
-                accounts {
-                    number
-                }
-            }
-        }
-        """
-        
-        try:
-            response = requests.post(
-                GRAPHQL_URL,
-                json={"query": query},
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": token
-                },
-                timeout=10
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            if "errors" in data:
-                logger.error(f"GraphQL account error: {data['errors']}")
-                return None
-                
-            accounts = data["data"]["viewer"]["accounts"]
-            if accounts:
-                self.account_number = accounts[0]["number"]
-                return self.account_number
-            else:
-                logger.error("No accounts found")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error getting account number: {e}")
-            return None
-    
-    def get_recent_dispatches(self):
-        """Get recent dispatch periods for smart charging"""
-        token = self.get_kraken_token()
-        account_number = self.get_account_number()
-        
-        if not token or not account_number:
-            logger.warning("Cannot fetch dispatch data - missing token or account number")
-            return []
-        
-        query = """
-        query getDispatches($accountNumber: String!) {
-            plannedDispatches(accountNumber: $accountNumber) {
-                startDt
-                endDt
-                delta
-                source
-            }
-            completedDispatches(accountNumber: $accountNumber) {
-                startDt
-                endDt
-                delta
-                source
-            }
-        }
-        """
-        
-        variables = {"accountNumber": account_number}
-        
-        try:
-            response = requests.post(
-                GRAPHQL_URL,
-                json={"query": query, "variables": variables},
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": token
-                },
-                timeout=10
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            if "errors" in data:
-                logger.warning(f"GraphQL dispatch error: {data['errors']}")
-                return []
-            
-            dispatches = []
-            
-            # Process planned dispatches
-            planned = data.get("data", {}).get("plannedDispatches", [])
-            for dispatch in planned:
-                start_dt = datetime.fromisoformat(dispatch["startDt"].replace("Z", "+00:00"))
-                end_dt = datetime.fromisoformat(dispatch["endDt"].replace("Z", "+00:00"))
-                
-                dispatches.append({
-                    "type": "planned",
-                    "start": start_dt,
-                    "end": end_dt,
-                    "delta": float(dispatch.get("delta", 0)),
-                    "source": dispatch.get("source")
-                })
-            
-            # Process completed dispatches (last 24 hours only for performance)
-            yesterday = datetime.now() - timedelta(days=1)
-            completed = data.get("data", {}).get("completedDispatches", [])
-            for dispatch in completed:
-                start_dt = datetime.fromisoformat(dispatch["startDt"].replace("Z", "+00:00"))
-                end_dt = datetime.fromisoformat(dispatch["endDt"].replace("Z", "+00:00"))
-                
-                # Only include recent completed dispatches
-                if start_dt >= yesterday:
-                    dispatches.append({
-                        "type": "completed",
-                        "start": start_dt,
-                        "end": end_dt,
-                        "delta": float(dispatch.get("delta", 0)),
-                        "source": dispatch.get("source")
-                    })
-            
-            self.dispatch_periods = dispatches
-            return dispatches
-            
-        except Exception as e:
-            logger.error(f"Error fetching dispatch periods: {e}")
-            return []
-    
-    def is_smart_charging_period(self, timestamp):
-        """Check if a timestamp falls within a smart charging dispatch period"""
-        for dispatch in self.dispatch_periods:
-            if dispatch["start"] <= timestamp <= dispatch["end"]:
-                return True, dispatch["type"]
-        return False, None
-
-# Global API instance
-octopus_api = IntelligentOctopusAPI(API_KEY)
-
-def get_electricity_usage_by_time(mpan, serial, use_mock=False):
-    """Get electricity usage split by off-peak, peak, and smart charging periods"""
-    
-    if use_mock:
-        return {
-            'off_peak_usage': 6.2,
-            'peak_usage': 2.3,
-            'smart_charging_usage': 1.8,
-            'total_usage': 10.3,
-            'smart_charging_sessions': 2
-        }
-    
-    # Get recent dispatch periods
-    octopus_api.get_recent_dispatches()
-    
-    yesterday = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
-    today = yesterday + timedelta(days=1)
-    
-    endpoint = f"/v1/electricity-meter-points/{mpan}/meters/{serial}/consumption/"
-    url = BASE_URL + endpoint
-    params = {
-        'period_from': yesterday.isoformat(),
-        'period_to': today.isoformat(),
-        'page_size': 100
     }
     
+    # Fetch electricity data
     try:
-        response = octopus_api.session.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        results = data.get('results', [])
-        
-        if not results:
-            return {
-                'off_peak_usage': 0,
-                'peak_usage': 0, 
-                'smart_charging_usage': 0,
-                'total_usage': 0,
-                'smart_charging_sessions': 0
-            }
-        
-        off_peak_usage = 0
-        peak_usage = 0
-        smart_charging_usage = 0
-        smart_charging_sessions = set()
-        
-        for reading in results:
-            interval_start = datetime.fromisoformat(reading['interval_start'].replace('Z', '+00:00'))
-            consumption = reading['consumption']
-            
-            hour = interval_start.hour
-            minute = interval_start.minute
-            
-            # Check if this period falls within a smart charging dispatch
-            is_smart_charging, dispatch_type = octopus_api.is_smart_charging_period(interval_start)
-            
-            # Standard off-peak: 23:30-05:30 (Intelligent Octopus Go)
-            is_standard_off_peak = (hour == 23 and minute >= 30) or (hour < 5) or (hour == 5 and minute < 30)
-            
-            if is_smart_charging:
-                smart_charging_usage += consumption
-                # Count unique charging sessions (group by hour for simplicity)
-                smart_charging_sessions.add(f"{interval_start.date()}_{hour}")
-            elif is_standard_off_peak:
-                off_peak_usage += consumption
-            else:
-                peak_usage += consumption
-        
-        return {
-            'off_peak_usage': round(off_peak_usage, 2),
-            'peak_usage': round(peak_usage, 2),
-            'smart_charging_usage': round(smart_charging_usage, 2),
-            'total_usage': round(off_peak_usage + peak_usage + smart_charging_usage, 2),
-            'smart_charging_sessions': len(smart_charging_sessions)
+        elec_url = f"https://api.octopus.energy/v1/electricity-meter-points/{ELECTRICITY_MPAN}/meters/{ELECTRICITY_SERIAL}/consumption/"
+        elec_params = {
+            'period_from': f"{date}T00:00:00Z",
+            'period_to': f"{date}T23:59:59Z",
+            'page_size': 200
         }
+        elec_response = requests.get(elec_url, params=elec_params, auth=(API_KEY, ''), timeout=30)
         
-    except Exception as e:
-        logger.error(f"Error fetching electricity data: {e}")
-        return None
-
-def get_gas_usage(mprn, serial, use_mock=False):
-    """Get gas usage for yesterday"""
-    
-    if use_mock:
-        return 12.3
-    
-    yesterday = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
-    today = yesterday + timedelta(days=1)
-    
-    endpoint = f"/v1/gas-meter-points/{mprn}/meters/{serial}/consumption/"
-    url = BASE_URL + endpoint
-    params = {
-        'period_from': yesterday.isoformat(),
-        'period_to': today.isoformat(),
-        'page_size': 100
-    }
-    
-    try:
-        response = octopus_api.session.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        results = data.get('results', [])
-        
-        if results:
-            total_consumption = sum(reading['consumption'] for reading in results)
-            return round(total_consumption, 2)
-        else:
-            return 0
+        if elec_response.status_code == 200:
+            elec_data = elec_response.json()
             
+            total_usage = 0
+            off_peak_usage = 0
+            peak_usage = 0
+            total_cost = 0
+            
+            for reading in elec_data.get('results', []):
+                consumption = reading.get('consumption', 0)
+                interval_start = reading.get('interval_start', '')
+                
+                # Parse the time to determine rate period
+                try:
+                    dt = datetime.fromisoformat(interval_start.replace('Z', '+00:00'))
+                    hour = dt.hour
+                    minute = dt.minute
+                    
+                    # Off-peak hours: 00:30 to 04:30
+                    is_off_peak = (hour == 0 and minute >= 30) or (1 <= hour <= 3) or (hour == 4 and minute < 30)
+                    
+                    total_usage += consumption
+                    
+                    if is_off_peak:
+                        off_peak_usage += consumption
+                        total_cost += consumption * RATES['off_peak']
+                    else:
+                        peak_usage += consumption
+                        total_cost += consumption * RATES['peak']
+                        
+                except Exception as e:
+                    logger.warning(f"Error parsing datetime {interval_start}: {e}")
+                    # Default to peak rate if parsing fails
+                    total_usage += consumption
+                    peak_usage += consumption
+                    total_cost += consumption * RATES['peak']
+            
+            result['electricity'] = {
+                'total_usage': round(total_usage, 2),
+                'off_peak_usage': round(off_peak_usage, 2),
+                'peak_usage': round(peak_usage, 2),
+                'smart_charging_usage': 0,  # Will be enhanced later
+                'total_cost': round(total_cost, 2),
+                'standing_charge': ELECTRICITY_STANDING_CHARGE
+            }
+    
     except Exception as e:
-        logger.error(f"Error fetching gas data: {e}")
-        return None
+        logger.error(f"Failed to fetch electricity data: {e}")
+    
+    # Fetch gas data
+    try:
+        gas_url = f"https://api.octopus.energy/v1/gas-meter-points/{GAS_MPRN}/meters/{GAS_SERIAL}/consumption/"
+        gas_params = {
+            'period_from': f"{date}T00:00:00Z",
+            'period_to': f"{date}T23:59:59Z",
+            'page_size': 200
+        }
+        gas_response = requests.get(gas_url, params=gas_params, auth=(API_KEY, ''), timeout=30)
+        
+        if gas_response.status_code == 200:
+            gas_data = gas_response.json()
+            
+            total_usage_m3 = 0
+            total_cost = 0
+            
+            for reading in gas_data.get('results', []):
+                consumption = reading.get('consumption', 0)
+                total_usage_m3 += consumption
+                # Calculate cost using current gas rate (approximate)
+                total_cost += consumption * 0.1194  # Current gas rate per m³
+            
+            # Convert m³ to kWh
+            total_usage_kwh = total_usage_m3 * GAS_CONVERSION_FACTOR
+            
+            result['gas'] = {
+                'usage_m3': round(total_usage_m3, 3),
+                'usage_kwh': round(total_usage_kwh, 2),
+                'cost': round(total_cost, 2),
+                'standing_charge': GAS_STANDING_CHARGE
+            }
+    
+    except Exception as e:
+        logger.error(f"Failed to fetch gas data: {e}")
+    
+    # Calculate total daily cost
+    result['totals']['daily_cost'] = round(
+        result['electricity']['total_cost'] + 
+        result['gas']['cost'] + 
+        ELECTRICITY_STANDING_CHARGE + 
+        GAS_STANDING_CHARGE, 2
+    )
+    
+    return result
 
 @app.route('/')
 def index():
-    return '''
-    <html>
-    <body style="font-family: Arial; margin: 40px;">
-        <h1>TRMNL Energy Plugin - Intelligent Octopus Go</h1>
-        <h2>Test Links:</h2>
-        <ul>
-            <li><a href="/api/energy?mock=true">API Test (Mock Data)</a></li>
-            <li><a href="/api/energy">API Test (Live Data)</a></li>
-            <li><a href="/trmnl?mock=true">TRMNL Display (Mock)</a></li>
-            <li><a href="/trmnl">TRMNL Display (Live)</a></li>
-            <li><a href="/health">Health Check</a></li>
-        </ul>
-        
-        <h3>Current Tariff Rates:</h3>
-        <p>Off-Peak (23:30-05:30): ''' + str(ELECTRICITY_RATE_OFF_PEAK) + '''p/kWh</p>
-        <p>Peak (05:30-23:30): ''' + str(ELECTRICITY_RATE_PEAK) + '''p/kWh</p>
-        <p><strong>Smart Charging: ''' + str(ELECTRICITY_RATE_OFF_PEAK) + '''p/kWh (Intelligent dispatch)</strong></p>
-        <p>Gas: ''' + str(GAS_RATE) + '''p/kWh</p>
-        <p>Standing Charges: Electricity ''' + str(STANDING_CHARGE_ELECTRICITY) + '''p/day, Gas ''' + str(STANDING_CHARGE_GAS) + '''p/day</p>
-    </body>
-    </html>
-    '''
-
-@app.route('/api/energy')
-def energy_data():
-    use_mock = request.args.get('mock', 'false').lower() == 'true'
+    """Main route - shows energy usage data"""
+    data = get_energy_data()
     
-    yesterday = datetime.now() - timedelta(days=1)
-    date_str = yesterday.strftime("%d %b %Y")
+    return f"""
+    <h1>Energy Usage - {data['date']}</h1>
     
-    electricity_data = get_electricity_usage_by_time(ELECTRICITY_MPAN, ELECTRICITY_SERIAL, use_mock)
-    gas_usage = get_gas_usage(GAS_MPRN, GAS_SERIAL, use_mock)
+    <h2>⚡ Electricity</h2>
+    <p>Total: {data['electricity']['total_usage']} kWh (£{data['electricity']['total_cost']:.2f})</p>
+    <p>Off-peak: {data['electricity']['off_peak_usage']} kWh</p>
+    <p>Peak: {data['electricity']['peak_usage']} kWh</p>
+    <p>Smart charging: {data['electricity']['smart_charging_usage']} kWh</p>
+    <p>Standing charge: £{data['electricity']['standing_charge']:.2f}</p>
     
-    if electricity_data is None or gas_usage is None:
-        return jsonify({
-            "date": date_str,
-            "error": "Failed to fetch data",
-            "timestamp": datetime.now().isoformat()
-        })
+    <h2>🔥 Gas</h2>
+    <p>Usage: {data['gas']['usage_kwh']} kWh ({data['gas']['usage_m3']} m³)</p>
+    <p>Cost: £{data['gas']['cost']:.2f}</p>
+    <p>Standing charge: £{data['gas']['standing_charge']:.2f}</p>
     
-    # Calculate costs
-    off_peak_cost = round(electricity_data['off_peak_usage'] * ELECTRICITY_RATE_OFF_PEAK, 2)
-    peak_cost = round(electricity_data['peak_usage'] * ELECTRICITY_RATE_PEAK, 2)
-    smart_charging_cost = round(electricity_data['smart_charging_usage'] * ELECTRICITY_RATE_OFF_PEAK, 2)
-    total_electricity_cost = round(off_peak_cost + peak_cost + smart_charging_cost + STANDING_CHARGE_ELECTRICITY, 2)
-    
-    gas_cost = round(gas_usage * GAS_RATE + STANDING_CHARGE_GAS, 2)
-    
-    total_cost = round(total_electricity_cost + gas_cost, 2)
-    
-    # Calculate potential savings from smart charging
-    smart_charging_savings = round(electricity_data['smart_charging_usage'] * (ELECTRICITY_RATE_PEAK - ELECTRICITY_RATE_OFF_PEAK), 2)
-    
-    return jsonify({
-        "date": date_str,
-        "electricity": {
-            "off_peak": {
-                "usage": electricity_data['off_peak_usage'],
-                "rate": ELECTRICITY_RATE_OFF_PEAK,
-                "cost": off_peak_cost,
-                "period": "23:30-05:30"
-            },
-            "peak": {
-                "usage": electricity_data['peak_usage'],
-                "rate": ELECTRICITY_RATE_PEAK,
-                "cost": peak_cost,
-                "period": "05:30-23:30"
-            },
-            "smart_charging": {
-                "usage": electricity_data['smart_charging_usage'],
-                "rate": ELECTRICITY_RATE_OFF_PEAK,
-                "cost": smart_charging_cost,
-                "sessions": electricity_data['smart_charging_sessions'],
-                "savings": smart_charging_savings,
-                "period": "Intelligent dispatch"
-            },
-            "total_usage": electricity_data['total_usage'],
-            "total_cost": total_electricity_cost,
-            "standing_charge": STANDING_CHARGE_ELECTRICITY,
-            "unit": "kWh"
-        },
-        "gas": {
-            "usage": gas_usage,
-            "rate": GAS_RATE,
-            "cost": gas_cost,
-            "standing_charge": STANDING_CHARGE_GAS,
-            "unit": "m³"
-        },
-        "total_cost": total_cost,
-        "currency": "GBP",
-        "timestamp": datetime.now().isoformat(),
-        "mock_data": use_mock,
-        "intelligent_features": {
-            "dispatch_periods_found": len(octopus_api.dispatch_periods),
-            "smart_charging_active": electricity_data['smart_charging_usage'] > 0,
-            "total_savings": smart_charging_savings
-        }
-    })
+    <h2>💷 Total</h2>
+    <p>Daily total: £{data['totals']['daily_cost']:.2f}</p>
+    <p>EV sessions: {data['smart_charging']['sessions']}</p>
+    """
 
 @app.route('/trmnl')
-def trmnl_display():
-    use_mock = request.args.get('mock', 'false')
-    api_url = '/api/energy?mock=' + use_mock if use_mock == 'true' else '/api/energy'
+def trmnl():
+    """TRMNL endpoint - returns formatted data for display"""
+    data = get_energy_data()
     
-    html_template = '''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <title>Energy Usage - Intelligent Octopus Go</title>
-        <style>
-            body { 
-                font-family: monospace;
-                margin: 15px; 
-                background: white;
-                color: black;
-                font-size: 16px;
-            }
-            .header { 
-                font-size: 24px; 
-                font-weight: bold; 
-                margin-bottom: 15px; 
-                text-align: center;
-                border-bottom: 2px solid black;
-                padding-bottom: 8px;
-            }
-            .date {
-                text-align: center; 
-                margin-bottom: 20px; 
-                font-size: 14px;
-            }
-            .section { 
-                margin: 15px 0; 
-                border: 1px solid #ddd;
-                padding: 10px;
-                border-radius: 5px;
-            }
-            .section-title {
-                font-weight: bold;
-                margin-bottom: 8px;
-                font-size: 18px;
-            }
-            .usage-row { 
-                display: flex;
-                justify-content: space-between;
-                margin: 5px 0;
-                font-size: 14px;
-            }
-            .smart-charging-row {
-                display: flex;
-                justify-content: space-between;
-                margin: 5px 0;
-                font-size: 14px;
-                background-color: #e8f5e8;
-                padding: 3px;
-                border-radius: 3px;
-            }
-            .total-row {
-                display: flex;
-                justify-content: space-between;
-                margin: 8px 0;
-                font-weight: bold;
-                border-top: 1px solid #ccc;
-                padding-top: 5px;
-            }
-            .grand-total { 
-                margin-top: 20px; 
-                font-size: 20px; 
-                font-weight: bold; 
-                text-align: center;
-                border-top: 2px solid black;
-                padding-top: 15px;
-            }
-            .savings-highlight {
-                background-color: #d4edda;
-                padding: 8px;
-                border-radius: 5px;
-                margin: 10px 0;
-                text-align: center;
-                font-weight: bold;
-                color: #155724;
-            }
-            .footer {
-                text-align: center; 
-                font-size: 11px; 
-                margin-top: 15px;
-                color: #666;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="header">Energy Usage</div>
-        <div id="content">Loading...</div>
-        
-        <script>
-            fetch('API_URL_PLACEHOLDER')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        document.getElementById('content').innerHTML = '<div style="text-align: center; color: red;">Error: ' + data.error + '</div>';
-                        return;
-                    }
-                    
-                    const elec = data.electricity;
-                    const gas = data.gas;
-                    const intelligent = data.intelligent_features;
-                    
-                    let content = '<div class="date">' + data.date + '</div>';
-                    
-                    // Electricity section
-                    content += '<div class="section">' +
-                        '<div class="section-title">⚡ Electricity</div>' +
-                        '<div class="usage-row"><span>Off-Peak (' + elec.off_peak.period + '):</span><span>' + elec.off_peak.usage + ' kWh (£' + elec.off_peak.cost.toFixed(2) + ')</span></div>' +
-                        '<div class="usage-row"><span>Peak (' + elec.peak.period + '):</span><span>' + elec.peak.usage + ' kWh (£' + elec.peak.cost.toFixed(2) + ')</span></div>';
-                    
-                    // Smart charging row - highlighted if active
-                    if (elec.smart_charging.usage > 0) {
-                        content += '<div class="smart-charging-row"><span>🚗 Smart Charging (' + elec.smart_charging.sessions + ' sessions):</span><span>' + elec.smart_charging.usage + ' kWh (£' + elec.smart_charging.cost.toFixed(2) + ')</span></div>';
-                    } else {
-                        content += '<div class="usage-row"><span>🚗 Smart Charging:</span><span>0 kWh (£0.00)</span></div>';
-                    }
-                    
-                    content += '<div class="usage-row"><span>Standing Charge:</span><span>£' + elec.standing_charge.toFixed(2) + '</span></div>' +
-                        '<div class="total-row"><span>Total:</span><span>' + elec.total_usage + ' kWh (£' + elec.total_cost.toFixed(2) + ')</span></div>' +
-                        '</div>';
-                    
-                    // Show savings if smart charging was used
-                    if (elec.smart_charging.savings > 0) {
-                        content += '<div class="savings-highlight">Smart charging saved £' + elec.smart_charging.savings.toFixed(2) + ' today!</div>';
-                    }
-                    
-                    // Gas section
-                    content += '<div class="section">' +
-                        '<div class="section-title">🔥 Gas</div>' +
-                        '<div class="usage-row"><span>Usage:</span><span>' + gas.usage + ' m³</span></div>' +
-                        '<div class="usage-row"><span>Unit Cost:</span><span>£' + (gas.cost - gas.standing_charge).toFixed(2) + '</span></div>' +
-                        '<div class="usage-row"><span>Standing Charge:</span><span>£' + gas.standing_charge.toFixed(2) + '</span></div>' +
-                        '<div class="total-row"><span>Total:</span><span>£' + gas.cost.toFixed(2) + '</span></div>' +
-                        '</div>';
-                    
-                    // Grand total
-                    content += '<div class="grand-total">Daily Total: £' + data.total_cost.toFixed(2) + '</div>';
-                    
-                    // Footer with intelligent features info
-                    let footerText = data.mock_data ? 'Mock Data' : 'Live Data';
-                    if (intelligent.dispatch_periods_found > 0) {
-                        footerText += ' • ' + intelligent.dispatch_periods_found + ' dispatches found';
-                    }
-                    content += '<div class="footer">' + footerText + '</div>';
-                    
-                    document.getElementById('content').innerHTML = content;
-                })
-                .catch(error => {
-                    document.getElementById('content').innerHTML = '<div style="text-align: center; color: red;">Error loading data</div>';
-                });
-        </script>
-    </body>
-    </html>
-    '''
+    # TRMNL template
+    template = """
+<div class="layout layout--col">
+  {% if smart_charging_savings > 0 %}
+  <div class="text--center" style="background: #e8f5e8; border: 2px solid #4caf50; border-radius: 6px; padding: 10px; margin-bottom: 12px;">
+    <span class="title" style="color: #2e7d32; font-weight: bold;">🚗 Smart Charging Saved £{{ smart_charging_savings }}</span>
+  </div>
+  {% endif %}
+
+  <div class="columns">
+    <div class="column">
+      <div class="content text--center">
+        <div style="border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+          <span class="title" style="font-size: 1.2em; color: #333;">⚡ ELECTRICITY</span>
+          <div style="margin: 8px 0;">
+            <span class="value" style="font-size: 1.4em; font-weight: bold;">{{ electricity_total_usage }} kWh</span>
+          </div>
+          <div style="margin: 4px 0;">
+            <span class="value" style="font-size: 1.2em; color: #d32f2f;">£{{ electricity_total_cost }}</span>
+          </div>
+          
+          <div style="margin-top: 10px; font-size: 0.9em;">
+            <div style="margin: 2px 0;">Off-Peak: {{ electricity_off_peak_usage }} kWh</div>
+            <div style="margin: 2px 0;">Peak: {{ electricity_peak_usage }} kWh</div>
+            {% if smart_charging_usage > 0 %}
+            <div style="margin: 2px 0; color: #2e7d32; font-weight: bold;">🚗 Smart: {{ smart_charging_usage }} kWh</div>
+            {% else %}
+            <div style="margin: 2px 0; color: #666;">🚗 Smart: 0 kWh</div>
+            {% endif %}
+            <div style="margin: 2px 0; color: #666;">Standing: £{{ electricity_standing_charge }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
     
-    return html_template.replace('API_URL_PLACEHOLDER', api_url)
+    <div class="column">
+      <div class="content text--center">
+        <div style="border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+          <span class="title" style="font-size: 1.2em; color: #333;">🔥 GAS</span>
+          <div style="margin: 8px 0;">
+            <span class="value" style="font-size: 1.4em; font-weight: bold;">{{ gas_usage_kwh }} kWh</span>
+          </div>
+          <div style="margin: 4px 0;">
+            <span class="value" style="font-size: 1.2em; color: #d32f2f;">£{{ gas_cost }}</span>
+          </div>
+          
+          <div style="margin-top: 10px; font-size: 0.9em;">
+            <div style="margin: 2px 0;">Usage: {{ gas_usage_kwh }} kWh</div>
+            <div style="margin: 2px 0; color: #666;">Standing: £{{ gas_standing_charge }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="columns">
+    <div class="column">
+      <div class="content text--center">
+        <div style="background: #f5f5f5; border-radius: 8px; padding: 12px;">
+          <span class="title" style="color: #333;">💷 DAILY TOTAL</span>
+          <div style="margin: 6px 0;">
+            <span class="value" style="font-size: 1.6em; font-weight: bold; color: #d32f2f;">£{{ total_cost }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="column">
+      <div class="content text--center">
+        <div style="background: #f5f5f5; border-radius: 8px; padding: 12px;">
+          <span class="title" style="color: #333;">🚗 EV SESSIONS</span>
+          <div style="margin: 6px 0;">
+            {% if smart_charging_sessions > 0 %}
+            <span class="value" style="font-size: 1.6em; font-weight: bold; color: #2e7d32;">{{ smart_charging_sessions }}</span>
+            {% else %}
+            <span class="value" style="font-size: 1.6em; font-weight: bold; color: #666;">0</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="title_bar">
+  <span class="title" style="font-weight: bold;">Energy Usage - {{ date }}</span>
+</div>
+    """
+    
+    # Prepare template variables
+    template_vars = {
+        'date': data['date'],
+        'electricity_total_usage': data['electricity']['total_usage'],
+        'electricity_off_peak_usage': data['electricity']['off_peak_usage'],
+        'electricity_peak_usage': data['electricity']['peak_usage'],
+        'electricity_total_cost': data['electricity']['total_cost'],
+        'electricity_standing_charge': data['electricity']['standing_charge'],
+        'gas_usage_kwh': data['gas']['usage_kwh'],
+        'gas_cost': data['gas']['cost'],
+        'gas_standing_charge': data['gas']['standing_charge'],
+        'smart_charging_usage': data['electricity']['smart_charging_usage'],
+        'smart_charging_sessions': data['smart_charging']['sessions'],
+        'smart_charging_savings': data['smart_charging']['savings'],
+        'total_cost': data['totals']['daily_cost']
+    }
+    
+    return render_template_string(template, **template_vars)
+
+@app.route('/api/energy')
+def api_energy():
+    """API endpoint - returns JSON data"""
+    return jsonify(get_energy_data())
 
 @app.route('/health')
-def health_check():
-    return jsonify({
-        "status": "ok", 
-        "timestamp": datetime.now().isoformat(),
-        "intelligent_octopus": True,
-        "api_features": ["dispatch_tracking", "smart_charging_detection"]
-    })
+def health():
+    """Health check endpoint"""
+    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
 
 if __name__ == '__main__':
-    print("Starting TRMNL Octopus Energy Plugin server with Intelligent Go support")
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    # For local development
+    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
