@@ -28,8 +28,8 @@ STANDING_CHARGE_GAS = float(os.getenv('STANDING_CHARGE_GAS', '0.2971'))
 BASE_URL = "https://api.octopus.energy"
 GRAPHQL_URL = "https://api.octopus.energy/v1/graphql"
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+# Set up logging for production
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 class IntelligentOctopusAPI:
@@ -344,14 +344,13 @@ def index():
     return '''
     <html>
     <body style="font-family: Arial; margin: 40px;">
-        <h1>TRMNL Energy Plugin Test - Intelligent Octopus Go</h1>
+        <h1>TRMNL Energy Plugin - Intelligent Octopus Go</h1>
         <h2>Test Links:</h2>
         <ul>
             <li><a href="/api/energy?mock=true">API Test (Mock Data)</a></li>
             <li><a href="/api/energy">API Test (Live Data)</a></li>
             <li><a href="/trmnl?mock=true">TRMNL Display (Mock)</a></li>
             <li><a href="/trmnl">TRMNL Display (Live)</a></li>
-            <li><a href="/dispatches">View Recent Dispatches</a></li>
             <li><a href="/health">Health Check</a></li>
         </ul>
         
@@ -364,33 +363,6 @@ def index():
     </body>
     </html>
     '''
-
-@app.route('/dispatches')
-def dispatches():
-    """Display recent dispatch information"""
-    dispatches = octopus_api.get_recent_dispatches()
-    
-    html = '''
-    <html>
-    <body style="font-family: Arial; margin: 40px;">
-        <h1>Recent Intelligent Octopus Dispatches</h1>
-        <a href="/">&larr; Back to main</a>
-    '''
-    
-    if dispatches:
-        html += '<h2>Planned Dispatches:</h2><ul>'
-        for dispatch in [d for d in dispatches if d['type'] == 'planned']:
-            html += f'<li>{dispatch["start"].strftime("%Y-%m-%d %H:%M")} to {dispatch["end"].strftime("%H:%M")} - {dispatch["delta"]:.1f} kWh</li>'
-        
-        html += '</ul><h2>Recent Completed Dispatches:</h2><ul>'
-        for dispatch in [d for d in dispatches if d['type'] == 'completed']:
-            html += f'<li>{dispatch["start"].strftime("%Y-%m-%d %H:%M")} to {dispatch["end"].strftime("%H:%M")} - {dispatch["delta"]:.1f} kWh</li>'
-        html += '</ul>'
-    else:
-        html += '<p>No dispatch data available.</p>'
-    
-    html += '</body></html>'
-    return html
 
 @app.route('/api/energy')
 def energy_data():
