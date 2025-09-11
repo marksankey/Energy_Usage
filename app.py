@@ -260,6 +260,51 @@ def energy_data():
 
 @app.route('/trmnl')
 def trmnl_display():
+    """TRMNL JSON endpoint - returns flat JSON data for TRMNL markup templates"""
+    use_mock = request.args.get('mock', 'false').lower() == 'true'
+    
+    yesterday = datetime.now() - timedelta(days=1)
+    date_str = yesterday.strftime("%d %b %Y")
+    
+    electricity_data = get_electricity_usage_by_time(ELECTRICITY_MPAN, ELECTRICITY_SERIAL, use_mock)
+    gas_usage = get_gas_usage(GAS_MPRN, GAS_SERIAL, use_mock)
+    
+    if electricity_data is None or gas_usage is None:
+        return jsonify({
+            "date": date_str,
+            "error": "Failed to fetch data",
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    # Calculate costs
+    off_peak_cost = round(electricity_data['off_peak_usage'] * ELECTRICITY_RATE_OFF_PEAK, 2)
+    peak_cost = round(electricity_data['peak_usage'] * ELECTRICITY_RATE_PEAK, 2)
+    total_electricity_cost = round(off_peak_cost + peak_cost + STANDING_CHARGE_ELECTRICITY, 2)
+    
+    gas_cost = round(gas_usage * GAS_RATE + STANDING_CHARGE_GAS, 2)
+    total_cost = round(total_electricity_cost + gas_cost, 2)
+    
+    # Return flat JSON structure for TRMNL
+    return jsonify({
+        "date": date_str,
+        "electricity_off_peak_usage": electricity_data['off_peak_usage'],
+        "electricity_off_peak_cost": off_peak_cost,
+        "electricity_peak_usage": electricity_data['peak_usage'], 
+        "electricity_peak_cost": peak_cost,
+        "electricity_total_usage": electricity_data['total_usage'],
+        "electricity_total_cost": total_electricity_cost,
+        "electricity_standing_charge": STANDING_CHARGE_ELECTRICITY,
+        "gas_usage": gas_usage,
+        "gas_cost": gas_cost,
+        "gas_standing_charge": STANDING_CHARGE_GAS,
+        "total_cost": total_cost,
+        "timestamp": datetime.now().isoformat(),
+        "mock_data": use_mock
+    })
+
+@app.route('/trmnl-html')
+def trmnl_html():
+    """TRMNL HTML endpoint - returns complete HTML page"""
     use_mock = request.args.get('mock', 'false')
     api_url = '/api/energy?mock=' + use_mock if use_mock == 'true' else '/api/energy'
     
