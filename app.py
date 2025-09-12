@@ -288,16 +288,16 @@ def trmnl_display():
     return jsonify({
         "date": date_str,
         "electricity_off_peak_usage": electricity_data['off_peak_usage'],
-        "electricity_off_peak_cost": off_peak_cost,
+        "electricity_off_peak_cost": f"{off_peak_cost:.2f}",
         "electricity_peak_usage": electricity_data['peak_usage'], 
-        "electricity_peak_cost": peak_cost,
+        "electricity_peak_cost": f"{peak_cost:.2f}",
         "electricity_total_usage": electricity_data['total_usage'],
-        "electricity_total_cost": total_electricity_cost,
-        "electricity_standing_charge": STANDING_CHARGE_ELECTRICITY,
+        "electricity_total_cost": f"{total_electricity_cost:.2f}",
+        "electricity_standing_charge": f"{STANDING_CHARGE_ELECTRICITY:.2f}",
         "gas_usage": gas_usage,
-        "gas_cost": gas_cost,
-        "gas_standing_charge": STANDING_CHARGE_GAS,
-        "total_cost": total_cost,
+        "gas_cost": f"{gas_cost:.2f}",
+        "gas_standing_charge": f"{STANDING_CHARGE_GAS:.2f}",
+        "total_cost": f"{total_cost:.2f}",
         "timestamp": datetime.now().isoformat(),
         "mock_data": use_mock
     })
