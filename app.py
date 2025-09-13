@@ -41,7 +41,7 @@ STANDING_CHARGE_GAS = float(os.getenv('STANDING_CHARGE_GAS', '0.2971'))
 BASE_URL = "https://api.octopus.energy"
 
 # Set up logging for production
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(level=logging.INFO)  # Changed to INFO to see gas calculation logs
 logger = logging.getLogger(__name__)
 
 def get_electricity_usage_by_time(mpan, serial, use_mock=False):
@@ -115,7 +115,7 @@ def get_gas_usage(mprn, serial, use_mock=False):
     """Get gas usage for yesterday, with fallback to recent days if zero"""
     
     if use_mock:
-        return 12.3
+        return 44.5  # Updated mock to reflect realistic kWh value
     
     # Gas conversion factor: m³ to kWh
     # Standard UK conversion is ~11.1868 kWh per m³
@@ -143,12 +143,24 @@ def get_gas_usage(mprn, serial, use_mock=False):
         data = response.json()
         results = data.get('results', [])
         
+        logger.info(f"Gas API response: {len(results)} readings found")
+        
         if results:
-            total_consumption_m3 = sum(reading['consumption'] for reading in results)
-            total_consumption_kwh = total_consumption_m3 * GAS_M3_TO_KWH
+            # Debug: Log a few sample readings
+            for i, reading in enumerate(results[:3]):
+                logger.info(f"Gas reading {i+1}: {reading['consumption']} m³ at {reading['interval_start']}")
             
-            # If yesterday was zero, try last 7 days for daily average
+            # Sum all readings in m³ for the day
+            total_consumption_m3 = sum(reading['consumption'] for reading in results)
+            logger.info(f"Total gas consumption: {total_consumption_m3:.3f} m³")
+            
+            # Convert to kWh using the conversion factor
+            total_consumption_kwh = total_consumption_m3 * GAS_M3_TO_KWH
+            logger.info(f"Gas consumption in kWh: {total_consumption_kwh:.2f} kWh")
+            
+            # If yesterday had no consumption, try last 7 days for daily average
             if total_consumption_m3 == 0:
+                logger.info("No gas usage yesterday, trying last 7 days...")
                 week_ago = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=7)
                 params_week = {
                     'period_from': week_ago.isoformat(),
@@ -165,10 +177,13 @@ def get_gas_usage(mprn, serial, use_mock=False):
                     total_week_m3 = sum(reading['consumption'] for reading in results_week)
                     total_week_kwh = total_week_m3 * GAS_M3_TO_KWH
                     daily_average_kwh = total_week_kwh / 7
+                    logger.info(f"7-day average gas usage: {daily_average_kwh:.2f} kWh/day")
                     return round(daily_average_kwh, 2)
             
+            # Return the converted kWh value
             return round(total_consumption_kwh, 2) if total_consumption_kwh > 0 else 0
         else:
+            logger.warning("No gas readings found for yesterday")
             return 0
             
     except Exception as e:
@@ -216,7 +231,7 @@ def energy_data():
             "timestamp": datetime.now().isoformat()
         })
     
-    # Calculate costs
+    # Calculate costs - ensure 2 decimal places with proper rounding
     off_peak_cost = round(electricity_data['off_peak_usage'] * ELECTRICITY_RATE_OFF_PEAK, 2)
     peak_cost = round(electricity_data['peak_usage'] * ELECTRICITY_RATE_PEAK, 2)
     total_electricity_cost = round(off_peak_cost + peak_cost + STANDING_CHARGE_ELECTRICITY, 2)
@@ -250,7 +265,7 @@ def energy_data():
             "rate": GAS_RATE,
             "cost": gas_cost,
             "standing_charge": STANDING_CHARGE_GAS,
-            "unit": "m³"
+            "unit": "kWh"  # Changed from m³ to kWh since we're returning converted values
         },
         "total_cost": total_cost,
         "currency": "GBP",
@@ -276,7 +291,7 @@ def trmnl_display():
             "timestamp": datetime.now().isoformat()
         })
     
-    # Calculate costs
+    # Calculate costs - ensure 2 decimal places with proper rounding
     off_peak_cost = round(electricity_data['off_peak_usage'] * ELECTRICITY_RATE_OFF_PEAK, 2)
     peak_cost = round(electricity_data['peak_usage'] * ELECTRICITY_RATE_PEAK, 2)
     total_electricity_cost = round(off_peak_cost + peak_cost + STANDING_CHARGE_ELECTRICITY, 2)
@@ -403,9 +418,9 @@ def trmnl_html():
                         '<div class="total-row"><span>' + elec.total_usage + ' kWh</span><span>£' + elec.total_cost.toFixed(2) + '</span></div>' +
                         '</div>';
                     
-                    // Gas section
+                    // Gas section - now showing kWh instead of m³ with proper decimal formatting
                     const gasUsageCost = (gas.usage * gas.rate).toFixed(2);
-                    const gasDisplayUsage = gas.usage > 0 ? gas.usage + ' kWh' : '0.0 kWh';
+                    const gasDisplayUsage = gas.usage > 0 ? gas.usage.toFixed(1) + ' kWh' : '0.0 kWh';
                     
                     content += '<div class="section">' +
                         '<div class="section-title">GAS</div>' +
@@ -414,8 +429,8 @@ def trmnl_html():
                         '<div class="total-row"><span>' + gasDisplayUsage + '</span><span>£' + gas.cost.toFixed(2) + '</span></div>' +
                         '</div>';
                     
-                    // Grand total - ensuring 2 decimal places
-                    content += '<div class="grand-total">DAILY TOTAL<br>£' + data.total_cost.toFixed(2) + '</div>';
+                    // Grand total - ensuring exactly 2 decimal places
+                    content += '<div class="grand-total">DAILY TOTAL<br>£' + parseFloat(data.total_cost).toFixed(2) + '</div>';
                     
                     // Footer 
                     let footerText = data.mock_data ? 'Mock Data' : 'Synced: about 8 hours ago';
