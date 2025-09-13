@@ -421,11 +421,12 @@ def trmnl_html():
                     // Gas section - now showing kWh instead of m³ with proper decimal formatting
                     const gasUsageCost = (gas.usage * gas.rate).toFixed(2);
                     const gasDisplayUsage = gas.usage > 0 ? gas.usage.toFixed(1) + ' kWh' : '0.0 kWh';
+                    const gasStandingCharge = parseFloat(gas.standing_charge).toFixed(2);
                     
                     content += '<div class="section">' +
                         '<div class="section-title">GAS</div>' +
                         '<div class="usage-row"><span>Usage: ' + gasDisplayUsage + '</span><span>£' + gasUsageCost + '</span></div>' +
-                        '<div class="usage-row"><span>Standing: £' + gas.standing_charge.toFixed(2) + '</span><span>£' + gas.standing_charge.toFixed(2) + '</span></div>' +
+                        '<div class="usage-row"><span>Standing: £' + gasStandingCharge + '</span><span>£' + gasStandingCharge + '</span></div>' +
                         '<div class="total-row"><span>' + gasDisplayUsage + '</span><span>£' + gas.cost.toFixed(2) + '</span></div>' +
                         '</div>';
                     
