@@ -427,7 +427,7 @@ def trmnl_html():
                         '<div class="section-title">GAS</div>' +
                         '<div class="usage-row"><span>Usage: ' + gasDisplayUsage + '</span><span>£' + gasUsageCost + '</span></div>' +
                         '<div class="usage-row"><span>Standing: £' + gasStandingCharge + '</span><span>£' + gasStandingCharge + '</span></div>' +
-                        '<div class="total-row"><span>' + gasDisplayUsage + '</span><span>£' + gas.cost.toFixed(2) + '</span></div>' +
+                        '<div class="total-row"><span>' + gasDisplayUsage + '</span><span>£' + parseFloat(gas.cost).toFixed(2) + '</span></div>' +
                         '</div>';
                     
                     // Grand total - ensuring exactly 2 decimal places
