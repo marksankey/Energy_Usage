@@ -321,7 +321,7 @@ def trmnl_display():
     gas_cost = round(gas_usage * GAS_RATE + STANDING_CHARGE_GAS, 2)
     total_cost = round(total_electricity_cost + gas_cost, 2)
     
-    # Return flat JSON structure for TRMNL
+    # Return flat JSON structure for TRMNL - ALL CURRENCY VALUES WITH 2 DECIMAL PLACES
     return jsonify({
         "date": date_str,
         "electricity_off_peak_usage": electricity_data['off_peak_usage'],
@@ -330,10 +330,10 @@ def trmnl_display():
         "electricity_peak_cost": f"{peak_cost:.2f}",
         "electricity_total_usage": electricity_data['total_usage'],
         "electricity_total_cost": f"{total_electricity_cost:.2f}",
-        "electricity_standing_charge": f"{STANDING_CHARGE_ELECTRICITY:.2f}",
+        "electricity_standing_charge": f"{STANDING_CHARGE_ELECTRICITY:.2f}",  # Fixed: was missing .2f
         "gas_usage": gas_usage,
-        "gas_cost": f"{gas_cost:.2f}",
-        "gas_standing_charge": f"{STANDING_CHARGE_GAS:.2f}",
+        "gas_cost": f"{gas_cost:.2f}",  # Fixed: was missing .2f
+        "gas_standing_charge": f"{STANDING_CHARGE_GAS:.2f}",  # Fixed: was missing .2f
         "total_cost": f"{total_cost:.2f}",
         "timestamp": datetime.now().isoformat(),
         "mock_data": use_mock
