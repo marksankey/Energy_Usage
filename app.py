@@ -112,14 +112,12 @@ def get_electricity_usage_by_time(mpan, serial, use_mock=False):
         return None
 
 def get_gas_usage(mprn, serial, use_mock=False):
-    """Get gas usage for yesterday, with fallback to recent days if zero"""
+    """Get gas usage for yesterday, with proper pagination handling"""
     
     if use_mock:
-        return 44.5  # Updated mock to reflect realistic kWh value
+        return 44.5
     
-    # Gas conversion factor: m³ to kWh
-    # Standard UK conversion is ~11.1868 kWh per m³
-    # This accounts for calorific value and volume correction
+    # Gas conversion factor: m³ to kWh (this is correct)
     GAS_M3_TO_KWH = 11.1868
     
     # Try yesterday first
@@ -131,27 +129,39 @@ def get_gas_usage(mprn, serial, use_mock=False):
     params = {
         'period_from': yesterday.isoformat(),
         'period_to': today.isoformat(),
-        'page_size': 100
+        'page_size': 1000  # Increased from 100 to ensure we get all data
     }
     
     try:
         session = requests.Session()
         session.auth = (API_KEY, '')
         
-        response = session.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        results = data.get('results', [])
+        all_results = []
+        current_url = url
         
-        logger.info(f"Gas API response: {len(results)} readings found")
+        # Handle pagination properly
+        while current_url:
+            response = session.get(current_url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            results = data.get('results', [])
+            
+            logger.info(f"Gas API page: {len(results)} readings")
+            all_results.extend(results)
+            
+            # Check for next page
+            current_url = data.get('next')
+            params = None  # Clear params for subsequent requests
         
-        if results:
+        logger.info(f"Total gas readings retrieved: {len(all_results)}")
+        
+        if all_results:
             # Debug: Log a few sample readings
-            for i, reading in enumerate(results[:3]):
+            for i, reading in enumerate(all_results[:3]):
                 logger.info(f"Gas reading {i+1}: {reading['consumption']} m³ at {reading['interval_start']}")
             
             # Sum all readings in m³ for the day
-            total_consumption_m3 = sum(reading['consumption'] for reading in results)
+            total_consumption_m3 = sum(reading['consumption'] for reading in all_results)
             logger.info(f"Total gas consumption: {total_consumption_m3:.3f} m³")
             
             # Convert to kWh using the conversion factor
@@ -162,19 +172,29 @@ def get_gas_usage(mprn, serial, use_mock=False):
             if total_consumption_m3 == 0:
                 logger.info("No gas usage yesterday, trying last 7 days...")
                 week_ago = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=7)
-                params_week = {
+                
+                # Fetch week data with pagination
+                week_params = {
                     'period_from': week_ago.isoformat(),
                     'period_to': today.isoformat(),
-                    'page_size': 200
+                    'page_size': 1000
                 }
                 
-                response_week = session.get(url, params=params_week, timeout=10)
-                response_week.raise_for_status()
-                data_week = response_week.json()
-                results_week = data_week.get('results', [])
+                week_results = []
+                week_url = url
                 
-                if results_week:
-                    total_week_m3 = sum(reading['consumption'] for reading in results_week)
+                while week_url:
+                    response_week = session.get(week_url, params=week_params, timeout=10)
+                    response_week.raise_for_status()
+                    data_week = response_week.json()
+                    results_week = data_week.get('results', [])
+                    week_results.extend(results_week)
+                    
+                    week_url = data_week.get('next')
+                    week_params = None
+                
+                if week_results:
+                    total_week_m3 = sum(reading['consumption'] for reading in week_results)
                     total_week_kwh = total_week_m3 * GAS_M3_TO_KWH
                     daily_average_kwh = total_week_kwh / 7
                     logger.info(f"7-day average gas usage: {daily_average_kwh:.2f} kWh/day")
@@ -189,6 +209,8 @@ def get_gas_usage(mprn, serial, use_mock=False):
     except Exception as e:
         logger.error(f"Error fetching gas data: {e}")
         return None
+
+
 
 @app.route('/')
 def index():
