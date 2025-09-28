@@ -332,7 +332,9 @@ def trmnl_display():
     peak_cost = round(electricity_data['peak_usage'] * ELECTRICITY_RATE_PEAK, 2)
     total_electricity_cost = round(off_peak_cost + peak_cost + STANDING_CHARGE_ELECTRICITY, 2)
     
-    gas_cost = round(gas_usage * GAS_RATE + STANDING_CHARGE_GAS, 2)
+    # Gas calculations
+    gas_usage_only_cost = round(gas_usage * GAS_RATE, 2)  # Just the usage cost, no standing charge
+    gas_cost = round(gas_usage_only_cost + STANDING_CHARGE_GAS, 2)  # Total gas cost
     total_cost = round(total_electricity_cost + gas_cost, 2)
     
     # Return flat JSON structure for TRMNL - ALL CURRENCY VALUES WITH 2 DECIMAL PLACES
@@ -344,10 +346,11 @@ def trmnl_display():
         "electricity_peak_cost": f"{peak_cost:.2f}",
         "electricity_total_usage": electricity_data['total_usage'],
         "electricity_total_cost": f"{total_electricity_cost:.2f}",
-        "electricity_standing_charge": f"{STANDING_CHARGE_ELECTRICITY:.2f}",  # Fixed: was missing .2f
+        "electricity_standing_charge": f"{STANDING_CHARGE_ELECTRICITY:.2f}",
         "gas_usage": gas_usage,
-        "gas_cost": f"{gas_cost:.2f}",  # Fixed: was missing .2f
-        "gas_standing_charge": f"{STANDING_CHARGE_GAS:.2f}",  # Fixed: was missing .2f
+        "gas_usage_only_cost": f"{gas_usage_only_cost:.2f}",  # NEW: Gas usage cost without standing charge
+        "gas_cost": f"{gas_cost:.2f}",
+        "gas_standing_charge": f"{STANDING_CHARGE_GAS:.2f}",
         "total_cost": f"{total_cost:.2f}",
         "timestamp": datetime.now().isoformat(),
         "mock_data": use_mock
