@@ -112,7 +112,7 @@ def get_electricity_usage_by_time(mpan, serial, use_mock=False):
         return None
 
 def get_gas_usage(mprn, serial, use_mock=False):
-    """Get gas usage for yesterday, with proper pagination handling"""
+    """Get gas usage for yesterday ONLY, with precise date range"""
     
     if use_mock:
         return 44.5
@@ -120,16 +120,20 @@ def get_gas_usage(mprn, serial, use_mock=False):
     # Gas conversion factor: m³ to kWh (this is correct)
     GAS_M3_TO_KWH = 11.1868
     
-    # Try yesterday first
-    yesterday = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
-    today = yesterday + timedelta(days=1)
+    # Calculate yesterday's date range PRECISELY
+    now = datetime.now()
+    yesterday_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_end = yesterday_start.replace(hour=23, minute=59, second=59, microsecond=999999)
+    
+    # Alternative: Use today's start as yesterday's end
+    # today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     
     endpoint = f"/v1/gas-meter-points/{mprn}/meters/{serial}/consumption/"
     url = BASE_URL + endpoint
     params = {
-        'period_from': yesterday.isoformat(),
-        'period_to': today.isoformat(),
-        'page_size': 1000  # Increased from 100 to ensure we get all data
+        'period_from': yesterday_start.isoformat(),
+        'period_to': yesterday_end.isoformat(),  # Changed: precise end time
+        'page_size': 1000
     }
     
     try:
@@ -154,15 +158,26 @@ def get_gas_usage(mprn, serial, use_mock=False):
             params = None  # Clear params for subsequent requests
         
         logger.info(f"Total gas readings retrieved: {len(all_results)}")
+        logger.info(f"Date range: {yesterday_start.isoformat()} to {yesterday_end.isoformat()}")
         
         if all_results:
+            # Filter results to ensure we only get yesterday's data
+            yesterday_results = []
+            for reading in all_results:
+                reading_time = datetime.fromisoformat(reading['interval_start'].replace('Z', '+00:00'))
+                # Convert to local time if needed and check if it's yesterday
+                if yesterday_start <= reading_time.replace(tzinfo=None) <= yesterday_end:
+                    yesterday_results.append(reading)
+            
+            logger.info(f"Filtered to yesterday only: {len(yesterday_results)} readings")
+            
             # Debug: Log a few sample readings
-            for i, reading in enumerate(all_results[:3]):
+            for i, reading in enumerate(yesterday_results[:3]):
                 logger.info(f"Gas reading {i+1}: {reading['consumption']} m³ at {reading['interval_start']}")
             
-            # Sum all readings in m³ for the day
-            total_consumption_m3 = sum(reading['consumption'] for reading in all_results)
-            logger.info(f"Total gas consumption: {total_consumption_m3:.3f} m³")
+            # Sum all readings in m³ for yesterday only
+            total_consumption_m3 = sum(reading['consumption'] for reading in yesterday_results)
+            logger.info(f"Total gas consumption (yesterday only): {total_consumption_m3:.3f} m³")
             
             # Convert to kWh using the conversion factor
             total_consumption_kwh = total_consumption_m3 * GAS_M3_TO_KWH
@@ -176,7 +191,7 @@ def get_gas_usage(mprn, serial, use_mock=False):
                 # Fetch week data with pagination
                 week_params = {
                     'period_from': week_ago.isoformat(),
-                    'period_to': today.isoformat(),
+                    'period_to': yesterday_end.isoformat(),  # End at yesterday, not today
                     'page_size': 1000
                 }
                 
@@ -200,7 +215,7 @@ def get_gas_usage(mprn, serial, use_mock=False):
                     logger.info(f"7-day average gas usage: {daily_average_kwh:.2f} kWh/day")
                     return round(daily_average_kwh, 2)
             
-            # Return the converted kWh value
+            # Return the converted kWh value for yesterday only
             return round(total_consumption_kwh, 2) if total_consumption_kwh > 0 else 0
         else:
             logger.warning("No gas readings found for yesterday")
@@ -209,7 +224,6 @@ def get_gas_usage(mprn, serial, use_mock=False):
     except Exception as e:
         logger.error(f"Error fetching gas data: {e}")
         return None
-
 
 
 @app.route('/')
