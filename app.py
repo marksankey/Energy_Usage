@@ -54,37 +54,63 @@ def get_electricity_usage_by_time(mpan, serial, use_mock=False):
             'total_usage': 8.5
         }
     
-    yesterday = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
-    today = yesterday + timedelta(days=1)
+    # Calculate yesterday's date range PRECISELY - matching gas function
+    now = datetime.now()
+    yesterday_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_end = yesterday_start.replace(hour=23, minute=59, second=59, microsecond=999999)
     
     endpoint = f"/v1/electricity-meter-points/{mpan}/meters/{serial}/consumption/"
     url = BASE_URL + endpoint
     params = {
-        'period_from': yesterday.isoformat(),
-        'period_to': today.isoformat(),
-        'page_size': 100
+        'period_from': yesterday_start.isoformat(),
+        'period_to': yesterday_end.isoformat(),  # Changed: precise end time
+        'page_size': 1000  # Increased from 100
     }
     
     try:
         session = requests.Session()
         session.auth = (API_KEY, '')
         
-        response = session.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        results = data.get('results', [])
+        all_results = []
+        current_url = url
         
-        if not results:
+        # Handle pagination properly
+        while current_url:
+            response = session.get(current_url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            results = data.get('results', [])
+            
+            logger.info(f"Electricity API page: {len(results)} readings")
+            all_results.extend(results)
+            
+            # Check for next page
+            current_url = data.get('next')
+            params = None  # Clear params for subsequent requests
+        
+        logger.info(f"Total electricity readings retrieved: {len(all_results)}")
+        
+        if not all_results:
             return {
                 'off_peak_usage': 0,
                 'peak_usage': 0, 
                 'total_usage': 0
             }
         
+        # Filter results to ensure we only get yesterday's data
+        yesterday_results = []
+        for reading in all_results:
+            reading_time = datetime.fromisoformat(reading['interval_start'].replace('Z', '+00:00'))
+            # Convert to local time if needed and check if it's yesterday
+            if yesterday_start <= reading_time.replace(tzinfo=None) <= yesterday_end:
+                yesterday_results.append(reading)
+        
+        logger.info(f"Filtered to yesterday only: {len(yesterday_results)} readings")
+        
         off_peak_usage = 0
         peak_usage = 0
         
-        for reading in results:
+        for reading in yesterday_results:
             interval_start = datetime.fromisoformat(reading['interval_start'].replace('Z', '+00:00'))
             consumption = reading['consumption']
             
@@ -110,6 +136,7 @@ def get_electricity_usage_by_time(mpan, serial, use_mock=False):
     except Exception as e:
         logger.error(f"Error fetching electricity data: {e}")
         return None
+
 
 def get_gas_usage(mprn, serial, use_mock=False):
     """Get gas usage for yesterday ONLY, with precise date range"""
