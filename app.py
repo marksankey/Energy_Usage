@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, make_response
 import requests
 from datetime import datetime, timedelta
 import os
@@ -348,40 +348,48 @@ def trmnl_display():
     gas_usage = get_gas_usage(GAS_MPRN, GAS_SERIAL, use_mock)
     
     if electricity_data is None or gas_usage is None:
-        return jsonify({
+        response_data = {
             "date": date_str,
             "error": "Failed to fetch data",
             "timestamp": datetime.now().isoformat()
-        })
+        }
+    else:
+        # Calculate costs - ensure 2 decimal places with proper rounding
+        off_peak_cost = round(electricity_data['off_peak_usage'] * ELECTRICITY_RATE_OFF_PEAK, 2)
+        peak_cost = round(electricity_data['peak_usage'] * ELECTRICITY_RATE_PEAK, 2)
+        total_electricity_cost = round(off_peak_cost + peak_cost + STANDING_CHARGE_ELECTRICITY, 2)
+        
+        # Gas calculations
+        gas_usage_only_cost = round(gas_usage * GAS_RATE, 2)  # Just the usage cost, no standing charge
+        gas_cost = round(gas_usage_only_cost + STANDING_CHARGE_GAS, 2)  # Total gas cost
+        total_cost = round(total_electricity_cost + gas_cost, 2)
+        
+        # Return flat JSON structure for TRMNL - ALL CURRENCY VALUES WITH 2 DECIMAL PLACES
+        response_data = {
+            "date": date_str,
+            "electricity_off_peak_usage": electricity_data['off_peak_usage'],
+            "electricity_off_peak_cost": f"{off_peak_cost:.2f}",
+            "electricity_peak_usage": electricity_data['peak_usage'], 
+            "electricity_peak_cost": f"{peak_cost:.2f}",
+            "electricity_total_usage": electricity_data['total_usage'],
+            "electricity_total_cost": f"{total_electricity_cost:.2f}",
+            "electricity_standing_charge": f"{STANDING_CHARGE_ELECTRICITY:.2f}",
+            "gas_usage": gas_usage,
+            "gas_usage_only_cost": f"{gas_usage_only_cost:.2f}",
+            "gas_cost": f"{gas_cost:.2f}",
+            "gas_standing_charge": f"{STANDING_CHARGE_GAS:.2f}",
+            "total_cost": f"{total_cost:.2f}",
+            "timestamp": datetime.now().isoformat(),
+            "mock_data": use_mock
+        }
     
-    # Calculate costs - ensure 2 decimal places with proper rounding
-    off_peak_cost = round(electricity_data['off_peak_usage'] * ELECTRICITY_RATE_OFF_PEAK, 2)
-    peak_cost = round(electricity_data['peak_usage'] * ELECTRICITY_RATE_PEAK, 2)
-    total_electricity_cost = round(off_peak_cost + peak_cost + STANDING_CHARGE_ELECTRICITY, 2)
+    # Create response with no-cache headers
+    response = make_response(jsonify(response_data))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
     
-    # Gas calculations
-    gas_usage_only_cost = round(gas_usage * GAS_RATE, 2)  # Just the usage cost, no standing charge
-    gas_cost = round(gas_usage_only_cost + STANDING_CHARGE_GAS, 2)  # Total gas cost
-    total_cost = round(total_electricity_cost + gas_cost, 2)
-    
-    # Return flat JSON structure for TRMNL - ALL CURRENCY VALUES WITH 2 DECIMAL PLACES
-    return jsonify({
-        "date": date_str,
-        "electricity_off_peak_usage": electricity_data['off_peak_usage'],
-        "electricity_off_peak_cost": f"{off_peak_cost:.2f}",
-        "electricity_peak_usage": electricity_data['peak_usage'], 
-        "electricity_peak_cost": f"{peak_cost:.2f}",
-        "electricity_total_usage": electricity_data['total_usage'],
-        "electricity_total_cost": f"{total_electricity_cost:.2f}",
-        "electricity_standing_charge": f"{STANDING_CHARGE_ELECTRICITY:.2f}",
-        "gas_usage": gas_usage,
-        "gas_usage_only_cost": f"{gas_usage_only_cost:.2f}",  # NEW: Gas usage cost without standing charge
-        "gas_cost": f"{gas_cost:.2f}",
-        "gas_standing_charge": f"{STANDING_CHARGE_GAS:.2f}",
-        "total_cost": f"{total_cost:.2f}",
-        "timestamp": datetime.now().isoformat(),
-        "mock_data": use_mock
-    })
+    return response
 
 @app.route('/trmnl-html')
 def trmnl_html():
