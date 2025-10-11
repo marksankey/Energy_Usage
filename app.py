@@ -336,6 +336,9 @@ def energy_data():
         "mock_data": use_mock
     })
 
+# MINIMAL CHANGE: Just update the /trmnl endpoint to add no-cache headers
+# Keep your existing get_electricity_usage_by_time() and get_gas_usage() functions unchanged
+
 @app.route('/trmnl')
 def trmnl_display():
     """TRMNL JSON endpoint - returns flat JSON data for TRMNL markup templates"""
@@ -383,7 +386,7 @@ def trmnl_display():
             "mock_data": use_mock
         }
     
-    # Create response with no-cache headers
+    # ONLY NEW PART: Create response with no-cache headers
     response = make_response(jsonify(response_data))
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
