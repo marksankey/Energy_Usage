@@ -41,7 +41,7 @@ STANDING_CHARGE_GAS = float(os.getenv('STANDING_CHARGE_GAS', '0.2971'))
 BASE_URL = "https://api.octopus.energy"
 
 # Set up logging for production
-logging.basicConfig(level=logging.INFO)  # Changed to INFO to see gas calculation logs
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def get_electricity_usage_by_time(mpan, serial, use_mock=False):
@@ -54,63 +54,37 @@ def get_electricity_usage_by_time(mpan, serial, use_mock=False):
             'total_usage': 8.5
         }
     
-    # Calculate yesterday's date range PRECISELY - matching gas function
-    now = datetime.now()
-    yesterday_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    yesterday_end = yesterday_start.replace(hour=23, minute=59, second=59, microsecond=999999)
+    yesterday = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     
     endpoint = f"/v1/electricity-meter-points/{mpan}/meters/{serial}/consumption/"
     url = BASE_URL + endpoint
     params = {
-        'period_from': yesterday_start.isoformat(),
-        'period_to': yesterday_end.isoformat(),  # Changed: precise end time
-        'page_size': 1000  # Increased from 100
+        'period_from': yesterday.isoformat(),
+        'period_to': today.isoformat(),
+        'page_size': 100
     }
     
     try:
         session = requests.Session()
         session.auth = (API_KEY, '')
         
-        all_results = []
-        current_url = url
+        response = session.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        results = data.get('results', [])
         
-        # Handle pagination properly
-        while current_url:
-            response = session.get(current_url, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            results = data.get('results', [])
-            
-            logger.info(f"Electricity API page: {len(results)} readings")
-            all_results.extend(results)
-            
-            # Check for next page
-            current_url = data.get('next')
-            params = None  # Clear params for subsequent requests
-        
-        logger.info(f"Total electricity readings retrieved: {len(all_results)}")
-        
-        if not all_results:
+        if not results:
             return {
                 'off_peak_usage': 0,
                 'peak_usage': 0, 
                 'total_usage': 0
             }
         
-        # Filter results to ensure we only get yesterday's data
-        yesterday_results = []
-        for reading in all_results:
-            reading_time = datetime.fromisoformat(reading['interval_start'].replace('Z', '+00:00'))
-            # Convert to local time if needed and check if it's yesterday
-            if yesterday_start <= reading_time.replace(tzinfo=None) <= yesterday_end:
-                yesterday_results.append(reading)
-        
-        logger.info(f"Filtered to yesterday only: {len(yesterday_results)} readings")
-        
         off_peak_usage = 0
         peak_usage = 0
         
-        for reading in yesterday_results:
+        for reading in results:
             interval_start = datetime.fromisoformat(reading['interval_start'].replace('Z', '+00:00'))
             consumption = reading['consumption']
             
@@ -137,121 +111,85 @@ def get_electricity_usage_by_time(mpan, serial, use_mock=False):
         logger.error(f"Error fetching electricity data: {e}")
         return None
 
-
 def get_gas_usage(mprn, serial, use_mock=False):
-    """Get gas usage for yesterday ONLY, with precise date range"""
+    """Get gas usage for yesterday - simplified to match downloader"""
     
     if use_mock:
         return 44.5
     
-    # Gas conversion factor: m³ to kWh (this is correct)
+    # Gas conversion factor: m³ to kWh
     GAS_M3_TO_KWH = 11.1868
     
-    # Calculate yesterday's date range PRECISELY
-    now = datetime.now()
-    yesterday_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    yesterday_end = yesterday_start.replace(hour=23, minute=59, second=59, microsecond=999999)
+    # Simple date range: yesterday 00:00 to today 00:00
+    yesterday = datetime.now() - timedelta(days=1)
+    today = datetime.now()
     
-    # Alternative: Use today's start as yesterday's end
-    # today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_start = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = today.replace(hour=0, minute=0, second=0, microsecond=0)
     
     endpoint = f"/v1/gas-meter-points/{mprn}/meters/{serial}/consumption/"
     url = BASE_URL + endpoint
     params = {
         'period_from': yesterday_start.isoformat(),
-        'period_to': yesterday_end.isoformat(),  # Changed: precise end time
-        'page_size': 1000
+        'period_to': today_start.isoformat(),
+        'page_size': 100
     }
     
     try:
         session = requests.Session()
-        session.auth = (API_KEY, '')
+        session.auth = (API_KEY, ''
+)
         
-        all_results = []
-        current_url = url
+        response = session.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        results = data.get('results', [])
         
-        # Handle pagination properly
-        while current_url:
-            response = session.get(current_url, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            results = data.get('results', [])
-            
-            logger.info(f"Gas API page: {len(results)} readings")
-            all_results.extend(results)
-            
-            # Check for next page
-            current_url = data.get('next')
-            params = None  # Clear params for subsequent requests
+        logger.info(f"Gas API returned {len(results)} readings")
         
-        logger.info(f"Total gas readings retrieved: {len(all_results)}")
-        logger.info(f"Date range: {yesterday_start.isoformat()} to {yesterday_end.isoformat()}")
-        
-        if all_results:
-            # Filter results to ensure we only get yesterday's data
-            yesterday_results = []
-            for reading in all_results:
-                reading_time = datetime.fromisoformat(reading['interval_start'].replace('Z', '+00:00'))
-                # Convert to local time if needed and check if it's yesterday
-                if yesterday_start <= reading_time.replace(tzinfo=None) <= yesterday_end:
-                    yesterday_results.append(reading)
+        if results:
+            # Log first few readings for debugging
+            for i, reading in enumerate(results[:3]):
+                logger.info(f"Sample reading {i+1}: {reading['consumption']} m³ at {reading['interval_start']}")
             
-            logger.info(f"Filtered to yesterday only: {len(yesterday_results)} readings")
+            # Sum all readings - API already filtered by date
+            total_consumption_m3 = sum(reading['consumption'] for reading in results)
+            logger.info(f"Total m³: {total_consumption_m3:.3f}")
             
-            # Debug: Log a few sample readings
-            for i, reading in enumerate(yesterday_results[:3]):
-                logger.info(f"Gas reading {i+1}: {reading['consumption']} m³ at {reading['interval_start']}")
-            
-            # Sum all readings in m³ for yesterday only
-            total_consumption_m3 = sum(reading['consumption'] for reading in yesterday_results)
-            logger.info(f"Total gas consumption (yesterday only): {total_consumption_m3:.3f} m³")
-            
-            # Convert to kWh using the conversion factor
+            # Convert to kWh
             total_consumption_kwh = total_consumption_m3 * GAS_M3_TO_KWH
-            logger.info(f"Gas consumption in kWh: {total_consumption_kwh:.2f} kWh")
+            logger.info(f"Total kWh: {total_consumption_kwh:.2f}")
             
-            # If yesterday had no consumption, try last 7 days for daily average
+            # If zero, try 7-day average
             if total_consumption_m3 == 0:
-                logger.info("No gas usage yesterday, trying last 7 days...")
+                logger.info("No gas usage yesterday, trying 7-day average...")
                 week_ago = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=7)
-                
-                # Fetch week data with pagination
-                week_params = {
+                params_week = {
                     'period_from': week_ago.isoformat(),
-                    'period_to': yesterday_end.isoformat(),  # End at yesterday, not today
-                    'page_size': 1000
+                    'period_to': today_start.isoformat(),
+                    'page_size': 200
                 }
                 
-                week_results = []
-                week_url = url
+                response_week = session.get(url, params=params_week, timeout=10)
+                response_week.raise_for_status()
+                data_week = response_week.json()
+                results_week = data_week.get('results', [])
                 
-                while week_url:
-                    response_week = session.get(week_url, params=week_params, timeout=10)
-                    response_week.raise_for_status()
-                    data_week = response_week.json()
-                    results_week = data_week.get('results', [])
-                    week_results.extend(results_week)
-                    
-                    week_url = data_week.get('next')
-                    week_params = None
-                
-                if week_results:
-                    total_week_m3 = sum(reading['consumption'] for reading in week_results)
+                if results_week:
+                    total_week_m3 = sum(reading['consumption'] for reading in results_week)
                     total_week_kwh = total_week_m3 * GAS_M3_TO_KWH
                     daily_average_kwh = total_week_kwh / 7
-                    logger.info(f"7-day average gas usage: {daily_average_kwh:.2f} kWh/day")
+                    logger.info(f"7-day average: {daily_average_kwh:.2f} kWh/day")
                     return round(daily_average_kwh, 2)
             
-            # Return the converted kWh value for yesterday only
             return round(total_consumption_kwh, 2) if total_consumption_kwh > 0 else 0
         else:
-            logger.warning("No gas readings found for yesterday")
+            logger.warning("No gas readings found")
             return 0
             
     except Exception as e:
         logger.error(f"Error fetching gas data: {e}")
         return None
-
 
 @app.route('/')
 def index():
@@ -294,7 +232,7 @@ def energy_data():
             "timestamp": datetime.now().isoformat()
         })
     
-    # Calculate costs - ensure 2 decimal places with proper rounding
+    # Calculate costs
     off_peak_cost = round(electricity_data['off_peak_usage'] * ELECTRICITY_RATE_OFF_PEAK, 2)
     peak_cost = round(electricity_data['peak_usage'] * ELECTRICITY_RATE_PEAK, 2)
     total_electricity_cost = round(off_peak_cost + peak_cost + STANDING_CHARGE_ELECTRICITY, 2)
@@ -328,16 +266,13 @@ def energy_data():
             "rate": GAS_RATE,
             "cost": gas_cost,
             "standing_charge": STANDING_CHARGE_GAS,
-            "unit": "kWh"  # Changed from m³ to kWh since we're returning converted values
+            "unit": "kWh"
         },
         "total_cost": total_cost,
         "currency": "GBP",
         "timestamp": datetime.now().isoformat(),
         "mock_data": use_mock
     })
-
-# MINIMAL CHANGE: Just update the /trmnl endpoint to add no-cache headers
-# Keep your existing get_electricity_usage_by_time() and get_gas_usage() functions unchanged
 
 @app.route('/trmnl')
 def trmnl_display():
@@ -357,17 +292,15 @@ def trmnl_display():
             "timestamp": datetime.now().isoformat()
         }
     else:
-        # Calculate costs - ensure 2 decimal places with proper rounding
+        # Calculate costs
         off_peak_cost = round(electricity_data['off_peak_usage'] * ELECTRICITY_RATE_OFF_PEAK, 2)
         peak_cost = round(electricity_data['peak_usage'] * ELECTRICITY_RATE_PEAK, 2)
         total_electricity_cost = round(off_peak_cost + peak_cost + STANDING_CHARGE_ELECTRICITY, 2)
         
-        # Gas calculations
-        gas_usage_only_cost = round(gas_usage * GAS_RATE, 2)  # Just the usage cost, no standing charge
-        gas_cost = round(gas_usage_only_cost + STANDING_CHARGE_GAS, 2)  # Total gas cost
+        gas_usage_only_cost = round(gas_usage * GAS_RATE, 2)
+        gas_cost = round(gas_usage_only_cost + STANDING_CHARGE_GAS, 2)
         total_cost = round(total_electricity_cost + gas_cost, 2)
         
-        # Return flat JSON structure for TRMNL - ALL CURRENCY VALUES WITH 2 DECIMAL PLACES
         response_data = {
             "date": date_str,
             "electricity_off_peak_usage": electricity_data['off_peak_usage'],
@@ -386,7 +319,6 @@ def trmnl_display():
             "mock_data": use_mock
         }
     
-    # ONLY NEW PART: Create response with no-cache headers
     response = make_response(jsonify(response_data))
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
@@ -495,7 +427,7 @@ def trmnl_html():
                         '<div class="total-row"><span>' + elec.total_usage + ' kWh</span><span>£' + elec.total_cost.toFixed(2) + '</span></div>' +
                         '</div>';
                     
-                    // Gas section - now showing kWh instead of m³ with proper decimal formatting
+                    // Gas section
                     const gasUsageCost = (gas.usage * gas.rate).toFixed(2);
                     const gasDisplayUsage = gas.usage > 0 ? gas.usage.toFixed(1) + ' kWh' : '0.0 kWh';
                     const gasStandingCharge = parseFloat(gas.standing_charge).toFixed(2);
@@ -507,7 +439,7 @@ def trmnl_html():
                         '<div class="total-row"><span>' + gasDisplayUsage + '</span><span>£' + parseFloat(gas.cost).toFixed(2) + '</span></div>' +
                         '</div>';
                     
-                    // Grand total - ensuring exactly 2 decimal places
+                    // Grand total
                     content += '<div class="grand-total">DAILY TOTAL<br>£' + parseFloat(data.total_cost).toFixed(2) + '</div>';
                     
                     // Footer 
