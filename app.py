@@ -218,29 +218,29 @@ def get_gas_usage(mprn: str, serial: str, use_mock: bool = False) -> Optional[fl
     
     results = data.get('results', [])
     logger.info(f"Gas API returned {len(results)} readings")
-    
+
     if results:
         # Log sample readings for debugging
         for i, reading in enumerate(results[:3]):
             logger.info(f"Sample reading {i+1}: {reading.get('consumption', 'N/A')} m³ at {reading.get('interval_start', 'N/A')}")
-        
+
         # Sum all readings - API already filtered by date
         total_consumption_m3 = sum(float(reading['consumption']) for reading in results)
         logger.info(f"Total m³: {total_consumption_m3:.3f}")
-        
+
         # Convert to kWh
         total_consumption_kwh = total_consumption_m3 * GAS_M3_TO_KWH
         logger.info(f"Total kWh: {total_consumption_kwh:.2f}")
-        
+
         # If zero, try 7-day average
         if total_consumption_m3 == 0:
             logger.info("No gas usage yesterday, calculating 7-day average...")
             return get_gas_weekly_average(mprn, serial, today_start)
-        
+
         return round(total_consumption_kwh, 2) if total_consumption_kwh > 0 else 0.0
     else:
-        logger.warning("No gas readings found for yesterday")
-        return 0.0
+        logger.warning("No gas readings found for yesterday, calculating 7-day average...")
+        return get_gas_weekly_average(mprn, serial, today_start)
 
 
 def get_gas_weekly_average(mprn: str, serial: str, today_start: datetime) -> float:
