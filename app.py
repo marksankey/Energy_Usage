@@ -75,12 +75,15 @@ def is_off_peak_period(dt: datetime) -> bool:
 
 def get_date_range_yesterday() -> Tuple[datetime, datetime]:
     """
-    Get the date range for yesterday (00:00 to 00:00 next day) in UTC.
-    
+    Get the date range for yesterday (00:00 to 00:00 next day) in local time.
+
+    Uses naive local time (no timezone) for compatibility with Octopus Energy API,
+    which expects local UK time for gas meter queries.
+
     Returns:
-        Tuple of (yesterday_start, today_start) datetimes in UTC
+        Tuple of (yesterday_start, today_start) datetimes in local time
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     yesterday_start = today_start - timedelta(days=1)
     return yesterday_start, today_start
