@@ -118,131 +118,176 @@ def make_octopus_request(endpoint: str, params: Dict[str, Any]) -> Optional[Dict
         return None
 
 
-def get_electricity_usage_by_time(mpan: str, serial: str, use_mock: bool = False) -> Optional[Dict[str, float]]:
+def get_electricity_usage_by_time(mpan: str, serial: str, use_mock: bool = False, include_raw: bool = False) -> Optional[Dict[str, Any]]:
     """
     Get electricity usage split by off-peak and peak periods for yesterday.
-    
+
     Args:
         mpan: Electricity meter point administration number
         serial: Meter serial number
         use_mock: If True, return mock data for testing
-        
+        include_raw: If True, include raw API response in return value
+
     Returns:
         Dictionary with off_peak_usage, peak_usage, and total_usage in kWh,
-        or None on error
+        and optionally raw_response from API, or None on error
     """
     if use_mock:
-        return {
+        mock_data = {
             'off_peak_usage': 6.2,
             'peak_usage': 2.3,
             'total_usage': 8.5
         }
+        if include_raw:
+            mock_data['raw_response'] = {'count': 48, 'results': [{'consumption': 0.129, 'interval_start': '2024-01-01T23:30:00Z'}]}
+        return mock_data
     
     yesterday_start, today_start = get_date_range_yesterday()
-    
+
     endpoint = f"/v1/electricity-meter-points/{mpan}/meters/{serial}/consumption/"
     params = {
         'period_from': yesterday_start.isoformat(),
         'period_to': today_start.isoformat(),
         'page_size': 100
     }
-    
+
     data = make_octopus_request(endpoint, params)
     if data is None:
         return None
-    
+
     results = data.get('results', [])
-    
+
     if not results:
         logger.warning("No electricity readings found for yesterday")
-        return {
+        result_data = {
             'off_peak_usage': 0.0,
             'peak_usage': 0.0,
             'total_usage': 0.0
         }
-    
+        if include_raw:
+            result_data['raw_response'] = data
+            result_data['query_params'] = params
+        return result_data
+
     off_peak_usage = 0.0
     peak_usage = 0.0
-    
+
     for reading in results:
         try:
             interval_start = datetime.fromisoformat(reading['interval_start'].replace('Z', '+00:00'))
             consumption = float(reading['consumption'])
-            
+
             if is_off_peak_period(interval_start):
                 off_peak_usage += consumption
             else:
                 peak_usage += consumption
-                
+
         except (KeyError, ValueError) as e:
             logger.warning(f"Skipping invalid reading: {e}")
             continue
-    
+
     total_usage = off_peak_usage + peak_usage
-    
+
     logger.info(f"Electricity usage - Off-peak: {off_peak_usage:.2f} kWh, Peak: {peak_usage:.2f} kWh")
-    
-    return {
+
+    result_data = {
         'off_peak_usage': round(off_peak_usage, 2),
         'peak_usage': round(peak_usage, 2),
         'total_usage': round(total_usage, 2)
     }
 
+    if include_raw:
+        result_data['raw_response'] = data
+        result_data['query_params'] = params
 
-def get_gas_usage(mprn: str, serial: str, use_mock: bool = False) -> Optional[float]:
+    return result_data
+
+
+def get_gas_usage(mprn: str, serial: str, use_mock: bool = False, include_raw: bool = False) -> Optional[Any]:
     """
     Get gas usage for yesterday in kWh.
-    
+
     If no usage is found for yesterday, returns 7-day average.
-    
+
     Args:
         mprn: Gas meter point reference number
         serial: Meter serial number
         use_mock: If True, return mock data for testing
-        
+        include_raw: If True, return dict with usage and raw API response
+
     Returns:
-        Gas usage in kWh, or None on error
+        Gas usage in kWh (float), or dict with usage and raw_response if include_raw=True,
+        or None on error
     """
     if use_mock:
+        if include_raw:
+            return {
+                'usage': 44.5,
+                'raw_response': {'count': 1, 'results': [{'consumption': 3.979, 'interval_start': '2024-01-01T00:00:00Z'}]}
+            }
         return 44.5
     
     yesterday_start, today_start = get_date_range_yesterday()
-    
+
     endpoint = f"/v1/gas-meter-points/{mprn}/meters/{serial}/consumption/"
     params = {
         'period_from': yesterday_start.isoformat(),
         'period_to': today_start.isoformat(),
         'page_size': 100
     }
-    
+
     data = make_octopus_request(endpoint, params)
     if data is None:
         return None
-    
+
     results = data.get('results', [])
     logger.info(f"Gas API returned {len(results)} readings")
-    
+
     if results:
         # Log sample readings for debugging
         for i, reading in enumerate(results[:3]):
             logger.info(f"Sample reading {i+1}: {reading.get('consumption', 'N/A')} m³ at {reading.get('interval_start', 'N/A')}")
-        
+
         # Sum all readings - API already filtered by date
         total_consumption_m3 = sum(float(reading['consumption']) for reading in results)
         logger.info(f"Total m³: {total_consumption_m3:.3f}")
-        
+
         # Convert to kWh
         total_consumption_kwh = total_consumption_m3 * GAS_M3_TO_KWH
         logger.info(f"Total kWh: {total_consumption_kwh:.2f}")
-        
+
         # If zero, try 7-day average
         if total_consumption_m3 == 0:
             logger.info("No gas usage yesterday, calculating 7-day average...")
-            return get_gas_weekly_average(mprn, serial, today_start)
-        
-        return round(total_consumption_kwh, 2) if total_consumption_kwh > 0 else 0.0
+            avg_usage = get_gas_weekly_average(mprn, serial, today_start)
+            if include_raw:
+                return {
+                    'usage': avg_usage,
+                    'raw_response': data,
+                    'query_params': params,
+                    'is_average': True
+                }
+            return avg_usage
+
+        usage_kwh = round(total_consumption_kwh, 2) if total_consumption_kwh > 0 else 0.0
+
+        if include_raw:
+            return {
+                'usage': usage_kwh,
+                'raw_response': data,
+                'query_params': params,
+                'is_average': False
+            }
+        return usage_kwh
     else:
         logger.warning("No gas readings found for yesterday")
+        if include_raw:
+            return {
+                'usage': 0.0,
+                'raw_response': data,
+                'query_params': params,
+                'is_average': False
+            }
         return 0.0
 
 
@@ -338,6 +383,14 @@ def index():
             <li><a href="/trmnl-html?mock=true">HTML Display (Mock)</a></li>
             <li><a href="/trmnl-html">HTML Display (Live)</a></li>
             <li><a href="/health">Health Check</a></li>
+        </ul>
+
+        <h2>Debug Links (Raw API Data):</h2>
+        <ul>
+            <li><a href="/debug?mock=true">Debug View (Mock Data)</a> - View raw API responses with mock data</li>
+            <li><a href="/debug">Debug View (Live Data)</a> - View raw API responses from Octopus Energy</li>
+            <li><a href="/api/raw-data?mock=true">Raw API JSON (Mock)</a> - JSON format of raw API data</li>
+            <li><a href="/api/raw-data">Raw API JSON (Live)</a> - JSON format of raw API data from Octopus Energy</li>
         </ul>
         
         <h3>Current Tariff Rates (Octopus Go):</h3>
@@ -645,11 +698,266 @@ def trmnl_html():
     return html_template.replace('API_URL_PLACEHOLDER', api_url)
 
 
+@app.route('/api/raw-data')
+def raw_api_data():
+    """
+    Debug endpoint that returns raw API responses from Octopus Energy.
+
+    Query Parameters:
+        mock (str): Set to 'true' to return mock data for testing
+
+    Returns:
+        JSON object with raw API responses and query parameters
+    """
+    use_mock = validate_mock_param(request.args.get('mock', 'false'))
+
+    yesterday_start, today_start = get_date_range_yesterday()
+
+    # Get electricity data with raw API response
+    electricity_data = get_electricity_usage_by_time(
+        ELECTRICITY_MPAN,
+        ELECTRICITY_SERIAL,
+        use_mock,
+        include_raw=True
+    )
+
+    # Get gas data with raw API response
+    gas_data = get_gas_usage(
+        GAS_MPRN,
+        GAS_SERIAL,
+        use_mock,
+        include_raw=True
+    )
+
+    if electricity_data is None or gas_data is None:
+        return jsonify({
+            "error": "Failed to fetch data from Octopus Energy API",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }), 500
+
+    # Extract usage values
+    if isinstance(gas_data, dict):
+        gas_usage = gas_data.get('usage', 0.0)
+    else:
+        gas_usage = gas_data
+
+    return jsonify({
+        "date_range": {
+            "from": yesterday_start.isoformat(),
+            "to": today_start.isoformat()
+        },
+        "electricity": {
+            "processed_data": {
+                "off_peak_usage": electricity_data.get('off_peak_usage', 0.0),
+                "peak_usage": electricity_data.get('peak_usage', 0.0),
+                "total_usage": electricity_data.get('total_usage', 0.0)
+            },
+            "raw_api_response": electricity_data.get('raw_response', {}),
+            "query_params": electricity_data.get('query_params', {})
+        },
+        "gas": {
+            "processed_data": {
+                "usage_kwh": gas_usage,
+                "is_average": gas_data.get('is_average', False) if isinstance(gas_data, dict) else False
+            },
+            "raw_api_response": gas_data.get('raw_response', {}) if isinstance(gas_data, dict) else {},
+            "query_params": gas_data.get('query_params', {}) if isinstance(gas_data, dict) else {}
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "mock_data": use_mock
+    })
+
+
+@app.route('/debug')
+def debug_display():
+    """
+    Debug HTML page showing raw API data in a readable format.
+
+    Query Parameters:
+        mock (str): Set to 'true' to use mock data
+
+    Returns:
+        HTML page displaying raw API responses
+    """
+    use_mock = request.args.get('mock', 'false')
+    api_url = f'/api/raw-data?mock={use_mock}' if validate_mock_param(use_mock) else '/api/raw-data'
+
+    html_template = '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>API Debug View</title>
+        <style>
+            body {
+                font-family: 'Courier New', monospace;
+                margin: 20px;
+                background: #1e1e1e;
+                color: #d4d4d4;
+            }
+            .header {
+                font-size: 24px;
+                font-weight: bold;
+                margin-bottom: 20px;
+                color: #4ec9b0;
+                border-bottom: 2px solid #4ec9b0;
+                padding-bottom: 10px;
+            }
+            .section {
+                margin: 20px 0;
+                padding: 15px;
+                background: #252526;
+                border-left: 4px solid #007acc;
+                border-radius: 4px;
+            }
+            .section-title {
+                font-size: 18px;
+                font-weight: bold;
+                margin-bottom: 10px;
+                color: #569cd6;
+            }
+            .data-row {
+                margin: 8px 0;
+                padding: 5px;
+                background: #1e1e1e;
+                border-radius: 3px;
+            }
+            .label {
+                color: #9cdcfe;
+                font-weight: bold;
+            }
+            .value {
+                color: #ce9178;
+            }
+            pre {
+                background: #1e1e1e;
+                padding: 15px;
+                border-radius: 5px;
+                overflow-x: auto;
+                border: 1px solid #3c3c3c;
+                color: #d4d4d4;
+            }
+            .error {
+                color: #f48771;
+                padding: 20px;
+                text-align: center;
+            }
+            .info-box {
+                background: #264f78;
+                padding: 10px;
+                margin: 10px 0;
+                border-radius: 4px;
+                border-left: 4px solid #007acc;
+            }
+            .warning-box {
+                background: #433620;
+                padding: 10px;
+                margin: 10px 0;
+                border-radius: 4px;
+                border-left: 4px solid #d7ba7d;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="header">🔍 API Debug View - Raw Data</div>
+        <div id="content">Loading...</div>
+
+        <script>
+            fetch('API_URL_PLACEHOLDER')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('API request failed');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('content').innerHTML =
+                            '<div class="error">Error: ' + data.error + '</div>';
+                        return;
+                    }
+
+                    let content = '';
+
+                    // Date range info
+                    content += '<div class="info-box">';
+                    content += '<div class="label">Date Range:</div>';
+                    content += '<div class="value">From: ' + data.date_range.from + '</div>';
+                    content += '<div class="value">To: ' + data.date_range.to + '</div>';
+                    content += '</div>';
+
+                    if (data.mock_data) {
+                        content += '<div class="warning-box"><strong>⚠️ Using Mock Data</strong></div>';
+                    }
+
+                    // Electricity Section
+                    content += '<div class="section">';
+                    content += '<div class="section-title">⚡ ELECTRICITY DATA</div>';
+
+                    content += '<div class="data-row"><span class="label">Off-Peak Usage:</span> <span class="value">' +
+                        data.electricity.processed_data.off_peak_usage + ' kWh</span></div>';
+                    content += '<div class="data-row"><span class="label">Peak Usage:</span> <span class="value">' +
+                        data.electricity.processed_data.peak_usage + ' kWh</span></div>';
+                    content += '<div class="data-row"><span class="label">Total Usage:</span> <span class="value">' +
+                        data.electricity.processed_data.total_usage + ' kWh</span></div>';
+
+                    content += '<h4 style="color: #4ec9b0; margin-top: 15px;">Query Parameters:</h4>';
+                    content += '<pre>' + JSON.stringify(data.electricity.query_params, null, 2) + '</pre>';
+
+                    content += '<h4 style="color: #4ec9b0; margin-top: 15px;">Raw API Response:</h4>';
+                    const elecResults = data.electricity.raw_api_response.results || [];
+                    content += '<div class="data-row"><span class="label">Total Records:</span> <span class="value">' +
+                        elecResults.length + '</span></div>';
+                    content += '<pre>' + JSON.stringify(data.electricity.raw_api_response, null, 2) + '</pre>';
+                    content += '</div>';
+
+                    // Gas Section
+                    content += '<div class="section">';
+                    content += '<div class="section-title">🔥 GAS DATA</div>';
+
+                    content += '<div class="data-row"><span class="label">Usage (kWh):</span> <span class="value">' +
+                        data.gas.processed_data.usage_kwh + ' kWh</span></div>';
+
+                    if (data.gas.processed_data.is_average) {
+                        content += '<div class="warning-box"><strong>⚠️ This is a 7-day average (no usage found for yesterday)</strong></div>';
+                    }
+
+                    content += '<h4 style="color: #4ec9b0; margin-top: 15px;">Query Parameters:</h4>';
+                    content += '<pre>' + JSON.stringify(data.gas.query_params, null, 2) + '</pre>';
+
+                    content += '<h4 style="color: #4ec9b0; margin-top: 15px;">Raw API Response:</h4>';
+                    const gasResults = data.gas.raw_api_response.results || [];
+                    content += '<div class="data-row"><span class="label">Total Records:</span> <span class="value">' +
+                        gasResults.length + '</span></div>';
+                    content += '<pre>' + JSON.stringify(data.gas.raw_api_response, null, 2) + '</pre>';
+                    content += '</div>';
+
+                    // Timestamp
+                    content += '<div class="info-box" style="text-align: center; margin-top: 20px;">';
+                    content += '<small>Last Updated: ' + new Date(data.timestamp).toLocaleString() + '</small>';
+                    content += '</div>';
+
+                    document.getElementById('content').innerHTML = content;
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    document.getElementById('content').innerHTML =
+                        '<div class="error">Error loading data. Please try again.</div>';
+                });
+        </script>
+    </body>
+    </html>
+    '''
+
+    return html_template.replace('API_URL_PLACEHOLDER', api_url)
+
+
 @app.route('/health')
 def health_check():
     """
     Health check endpoint for monitoring.
-    
+
     Returns:
         JSON object with status and timestamp
     """
