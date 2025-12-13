@@ -857,6 +857,51 @@ def debug_display():
                 border-radius: 4px;
                 border-left: 4px solid #d7ba7d;
             }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 10px 0;
+                background: #1e1e1e;
+                font-size: 13px;
+            }
+            th {
+                background: #094771;
+                color: #ffffff;
+                padding: 10px;
+                text-align: left;
+                font-weight: bold;
+                border: 1px solid #3c3c3c;
+            }
+            td {
+                padding: 8px;
+                border: 1px solid #3c3c3c;
+                color: #d4d4d4;
+            }
+            tr:nth-child(even) {
+                background: #252526;
+            }
+            tr:hover {
+                background: #2d2d30;
+            }
+            .off-peak-row {
+                background: #1a3a1a !important;
+            }
+            .off-peak-row:hover {
+                background: #234823 !important;
+            }
+            .collapsible {
+                cursor: pointer;
+                user-select: none;
+                color: #4ec9b0;
+                margin-top: 10px;
+            }
+            .collapsible:hover {
+                text-decoration: underline;
+            }
+            .json-section {
+                max-height: 300px;
+                overflow-y: auto;
+            }
         </style>
     </head>
     <body>
@@ -903,13 +948,58 @@ def debug_display():
                         data.electricity.processed_data.total_usage + ' kWh</span></div>';
 
                     content += '<h4 style="color: #4ec9b0; margin-top: 15px;">Query Parameters:</h4>';
-                    content += '<pre>' + JSON.stringify(data.electricity.query_params, null, 2) + '</pre>';
+                    content += '<div class="data-row"><span class="label">From:</span> <span class="value">' +
+                        data.electricity.query_params.period_from + '</span></div>';
+                    content += '<div class="data-row"><span class="label">To:</span> <span class="value">' +
+                        data.electricity.query_params.period_to + '</span></div>';
+                    content += '<div class="data-row"><span class="label">Page Size:</span> <span class="value">' +
+                        data.electricity.query_params.page_size + '</span></div>';
 
-                    content += '<h4 style="color: #4ec9b0; margin-top: 15px;">Raw API Response:</h4>';
+                    content += '<h4 style="color: #4ec9b0; margin-top: 15px;">Raw API Data (' +
+                        (data.electricity.raw_api_response.results || []).length + ' readings):</h4>';
+
                     const elecResults = data.electricity.raw_api_response.results || [];
-                    content += '<div class="data-row"><span class="label">Total Records:</span> <span class="value">' +
-                        elecResults.length + '</span></div>';
+                    if (elecResults.length > 0) {
+                        content += '<table>';
+                        content += '<thead><tr>';
+                        content += '<th>#</th>';
+                        content += '<th>Interval Start</th>';
+                        content += '<th>Interval End</th>';
+                        content += '<th>Consumption (kWh)</th>';
+                        content += '<th>Period</th>';
+                        content += '</tr></thead><tbody>';
+
+                        elecResults.forEach((reading, index) => {
+                            const start = new Date(reading.interval_start);
+                            const end = new Date(reading.interval_end);
+                            const hour = start.getHours();
+                            const minute = start.getMinutes();
+
+                            // Determine if off-peak (23:30-05:30)
+                            const isOffPeak = (hour === 23 && minute >= 30) || (hour < 5) || (hour === 5 && minute < 30);
+                            const rowClass = isOffPeak ? 'off-peak-row' : '';
+                            const period = isOffPeak ? 'Off-Peak' : 'Peak';
+
+                            content += '<tr class="' + rowClass + '">';
+                            content += '<td>' + (index + 1) + '</td>';
+                            content += '<td>' + start.toLocaleString() + '</td>';
+                            content += '<td>' + end.toLocaleString() + '</td>';
+                            content += '<td>' + reading.consumption.toFixed(3) + '</td>';
+                            content += '<td><strong>' + period + '</strong></td>';
+                            content += '</tr>';
+                        });
+
+                        content += '</tbody></table>';
+                    } else {
+                        content += '<div class="warning-box">No electricity readings found</div>';
+                    }
+
+                    // Collapsible JSON section
+                    content += '<div class="collapsible" onclick="toggleJson(\'elec-json\')">▶ Show Full JSON Response</div>';
+                    content += '<div id="elec-json" class="json-section" style="display: none;">';
                     content += '<pre>' + JSON.stringify(data.electricity.raw_api_response, null, 2) + '</pre>';
+                    content += '</div>';
+
                     content += '</div>';
 
                     // Gas Section
@@ -924,13 +1014,67 @@ def debug_display():
                     }
 
                     content += '<h4 style="color: #4ec9b0; margin-top: 15px;">Query Parameters:</h4>';
-                    content += '<pre>' + JSON.stringify(data.gas.query_params, null, 2) + '</pre>';
+                    content += '<div class="data-row"><span class="label">From:</span> <span class="value">' +
+                        data.gas.query_params.period_from + '</span></div>';
+                    content += '<div class="data-row"><span class="label">To:</span> <span class="value">' +
+                        data.gas.query_params.period_to + '</span></div>';
+                    content += '<div class="data-row"><span class="label">Page Size:</span> <span class="value">' +
+                        data.gas.query_params.page_size + '</span></div>';
 
-                    content += '<h4 style="color: #4ec9b0; margin-top: 15px;">Raw API Response:</h4>';
+                    content += '<h4 style="color: #4ec9b0; margin-top: 15px;">Raw API Data (' +
+                        (data.gas.raw_api_response.results || []).length + ' readings):</h4>';
+
                     const gasResults = data.gas.raw_api_response.results || [];
-                    content += '<div class="data-row"><span class="label">Total Records:</span> <span class="value">' +
-                        gasResults.length + '</span></div>';
+                    if (gasResults.length > 0) {
+                        content += '<table>';
+                        content += '<thead><tr>';
+                        content += '<th>#</th>';
+                        content += '<th>Interval Start</th>';
+                        content += '<th>Interval End</th>';
+                        content += '<th>Consumption (m³)</th>';
+                        content += '<th>Consumption (kWh)</th>';
+                        content += '</tr></thead><tbody>';
+
+                        let totalM3 = 0;
+                        let totalKwh = 0;
+                        const GAS_CONVERSION = 11.1868;
+
+                        gasResults.forEach((reading, index) => {
+                            const start = new Date(reading.interval_start);
+                            const end = new Date(reading.interval_end);
+                            const m3 = parseFloat(reading.consumption);
+                            const kwh = m3 * GAS_CONVERSION;
+
+                            totalM3 += m3;
+                            totalKwh += kwh;
+
+                            content += '<tr>';
+                            content += '<td>' + (index + 1) + '</td>';
+                            content += '<td>' + start.toLocaleString() + '</td>';
+                            content += '<td>' + end.toLocaleString() + '</td>';
+                            content += '<td>' + m3.toFixed(3) + '</td>';
+                            content += '<td>' + kwh.toFixed(2) + '</td>';
+                            content += '</tr>';
+                        });
+
+                        // Add totals row
+                        content += '<tr style="background: #094771; font-weight: bold;">';
+                        content += '<td colspan="3">TOTAL</td>';
+                        content += '<td>' + totalM3.toFixed(3) + '</td>';
+                        content += '<td>' + totalKwh.toFixed(2) + '</td>';
+                        content += '</tr>';
+
+                        content += '</tbody></table>';
+                    } else {
+                        content += '<div class="warning-box">No gas readings found</div>';
+                    }
+
+                    // Collapsible JSON section
+                    content += '<div class="collapsible" onclick="toggleJson(\'gas-json\')">▶ Show Full JSON Response</div>';
+                    content += '<div id="gas-json" class="json-section" style="display: none;">';
                     content += '<pre>' + JSON.stringify(data.gas.raw_api_response, null, 2) + '</pre>';
+                    content += '</div>';
+
                     content += '</div>';
 
                     // Timestamp
@@ -945,6 +1089,20 @@ def debug_display():
                     document.getElementById('content').innerHTML =
                         '<div class="error">Error loading data. Please try again.</div>';
                 });
+
+            function toggleJson(id) {
+                const element = document.getElementById(id);
+                const isHidden = element.style.display === 'none';
+                element.style.display = isHidden ? 'block' : 'none';
+
+                // Update arrow
+                const collapsibles = document.getElementsByClassName('collapsible');
+                for (let i = 0; i < collapsibles.length; i++) {
+                    if (collapsibles[i].onclick.toString().includes(id)) {
+                        collapsibles[i].innerHTML = (isHidden ? '▼' : '▶') + collapsibles[i].innerHTML.substring(1);
+                    }
+                }
+            }
         </script>
     </body>
     </html>
