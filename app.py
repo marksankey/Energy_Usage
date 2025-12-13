@@ -139,7 +139,14 @@ def get_electricity_usage_by_time(mpan: str, serial: str, use_mock: bool = False
             'total_usage': 8.5
         }
         if include_raw:
-            mock_data['raw_response'] = {'count': 48, 'results': [{'consumption': 0.129, 'interval_start': '2024-01-01T23:30:00Z'}]}
+            mock_data['raw_response'] = {
+                'count': 48,
+                'results': [
+                    {'consumption': 0.129, 'interval_start': '2024-01-01T23:30:00Z', 'interval_end': '2024-01-02T00:00:00Z'},
+                    {'consumption': 0.145, 'interval_start': '2024-01-02T00:00:00Z', 'interval_end': '2024-01-02T00:30:00Z'},
+                    {'consumption': 0.112, 'interval_start': '2024-01-02T00:30:00Z', 'interval_end': '2024-01-02T01:00:00Z'}
+                ]
+            }
         return mock_data
     
     yesterday_start, today_start = get_date_range_yesterday()
@@ -223,7 +230,12 @@ def get_gas_usage(mprn: str, serial: str, use_mock: bool = False, include_raw: b
         if include_raw:
             return {
                 'usage': 44.5,
-                'raw_response': {'count': 1, 'results': [{'consumption': 3.979, 'interval_start': '2024-01-01T00:00:00Z'}]}
+                'raw_response': {
+                    'count': 1,
+                    'results': [
+                        {'consumption': 3.979, 'interval_start': '2024-01-01T00:00:00Z', 'interval_end': '2024-01-02T00:00:00Z'}
+                    ]
+                }
             }
         return 44.5
     
