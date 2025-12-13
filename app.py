@@ -1007,7 +1007,7 @@ def debug_display():
                     }
 
                     // Collapsible JSON section
-                    content += '<div class="collapsible" onclick="toggleJson(\'elec-json\')">▶ Show Full JSON Response</div>';
+                    content += '<div class="collapsible" onclick="toggleJson(' + "'" + 'elec-json' + "'" + ')">▶ Show Full JSON Response</div>';
                     content += '<div id="elec-json" class="json-section" style="display: none;">';
                     content += '<pre>' + JSON.stringify(data.electricity.raw_api_response, null, 2) + '</pre>';
                     content += '</div>';
@@ -1082,7 +1082,7 @@ def debug_display():
                     }
 
                     // Collapsible JSON section
-                    content += '<div class="collapsible" onclick="toggleJson(\'gas-json\')">▶ Show Full JSON Response</div>';
+                    content += '<div class="collapsible" onclick="toggleJson(' + "'" + 'gas-json' + "'" + ')">▶ Show Full JSON Response</div>';
                     content += '<div id="gas-json" class="json-section" style="display: none;">';
                     content += '<pre>' + JSON.stringify(data.gas.raw_api_response, null, 2) + '</pre>';
                     content += '</div>';
