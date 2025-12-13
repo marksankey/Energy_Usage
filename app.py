@@ -789,7 +789,7 @@ def debug_display():
         mock (str): Set to 'true' to use mock data
 
     Returns:
-        HTML page displaying raw API responses
+        HTML page displaying raw API responses with tabular format
     """
     use_mock = request.args.get('mock', 'false')
     api_url = f'/api/raw-data?mock={use_mock}' if validate_mock_param(use_mock) else '/api/raw-data'
