@@ -483,12 +483,12 @@ def fetch_energy_data_for_day(days_ago: int, use_mock: bool = False) -> Optional
         total_consumption_kwh = total_consumption_m3 * GAS_M3_TO_KWH
         gas_usage = round(total_consumption_kwh, 2) if total_consumption_kwh > 0 else 0.0
 
-    # Check if we have meaningful data (at least one of electricity or gas should be non-zero)
-    if electricity_data['total_usage'] == 0 and gas_usage == 0:
-        logger.info(f"Both electricity and gas usage are zero for {days_ago} days ago")
+    # Check if we have complete data (BOTH electricity AND gas must be available)
+    if electricity_data['total_usage'] == 0 or gas_usage == 0:
+        logger.info(f"Incomplete data for {days_ago} days ago - Electricity: {electricity_data['total_usage']:.2f} kWh, Gas: {gas_usage:.2f} kWh")
         return None
 
-    logger.info(f"Successfully fetched data for {days_ago} days ago - Electricity: {electricity_data['total_usage']:.2f} kWh, Gas: {gas_usage:.2f} kWh")
+    logger.info(f"Successfully fetched COMPLETE data for {days_ago} days ago - Electricity: {electricity_data['total_usage']:.2f} kWh, Gas: {gas_usage:.2f} kWh")
 
     return {
         'electricity_data': electricity_data,
