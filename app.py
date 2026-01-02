@@ -599,32 +599,46 @@ def index():
 def energy_data():
     """
     API endpoint returning detailed energy usage and cost data.
-    
+    Uses smart fallback: tries yesterday's data first, then 2 days ago if unavailable.
+
     Query Parameters:
         mock (str): Set to 'true' to return mock data for testing
-        
+
     Returns:
         JSON object with electricity and gas usage/cost details
     """
     use_mock = validate_mock_param(request.args.get('mock', 'false'))
-    
-    yesterday = datetime.now(timezone.utc) - timedelta(days=1)
-    date_str = yesterday.strftime("%d %b %Y")
-    
-    electricity_data = get_electricity_usage_by_time(ELECTRICITY_MPAN, ELECTRICITY_SERIAL, use_mock)
-    gas_usage = get_gas_usage(GAS_MPRN, GAS_SERIAL, use_mock)
-    
-    if electricity_data is None or gas_usage is None:
+
+    # Get energy data with smart fallback
+    energy_data = get_energy_data_with_fallback(use_mock)
+
+    if energy_data is None:
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        date_str = yesterday.strftime("%d %b %Y")
         return jsonify({
             "date": date_str,
             "error": "Failed to fetch data from Octopus Energy API",
             "timestamp": datetime.now(timezone.utc).isoformat()
         }), 500
-    
+
+    electricity_data = energy_data['electricity_data']
+    gas_usage = energy_data['gas_usage']
+    data_date = energy_data['date']
+    days_ago = energy_data['days_ago']
+
+    # Format date string with clear indicator
+    date_str = data_date.strftime("%d %b %Y")
+    if days_ago == 1:
+        date_label = f"{date_str} (Yesterday)"
+    elif days_ago == 2:
+        date_label = f"{date_str} (2 days ago)"
+    else:
+        date_label = date_str
+
     costs = calculate_costs(electricity_data, gas_usage)
-    
+
     return jsonify({
-        "date": date_str,
+        "date": date_label,
         "electricity": {
             "off_peak": {
                 "usage": electricity_data['off_peak_usage'],
@@ -653,7 +667,8 @@ def energy_data():
         "total_cost": costs['total_cost'],
         "currency": "GBP",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "mock_data": use_mock
+        "mock_data": use_mock,
+        "data_age_days": days_ago
     })
 
 
