@@ -374,6 +374,161 @@ def validate_mock_param(value: str) -> bool:
     return value.lower() in ('true', '1', 'yes')
 
 
+def get_date_range_for_days_ago(days_ago: int) -> Tuple[datetime, datetime]:
+    """
+    Get the date range for a specific number of days ago (00:00 to 00:00 next day) in local time.
+
+    Args:
+        days_ago: Number of days to go back (1 = yesterday, 2 = day before yesterday)
+
+    Returns:
+        Tuple of (target_day_start, next_day_start) datetimes in local time
+    """
+    now = datetime.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    target_day_start = today_start - timedelta(days=days_ago)
+    next_day_start = target_day_start + timedelta(days=1)
+    return target_day_start, next_day_start
+
+
+def fetch_energy_data_for_day(days_ago: int, use_mock: bool = False) -> Optional[Dict[str, Any]]:
+    """
+    Fetch both electricity and gas data for a specific day.
+
+    Args:
+        days_ago: Number of days to go back (1 = yesterday, 2 = day before yesterday)
+        use_mock: If True, return mock data for testing
+
+    Returns:
+        Dictionary with electricity_data, gas_usage, and date, or None if data is insufficient
+    """
+    target_day_start, next_day_start = get_date_range_for_days_ago(days_ago)
+
+    # For mock data, just use the existing functions
+    if use_mock:
+        electricity_data = get_electricity_usage_by_time(ELECTRICITY_MPAN, ELECTRICITY_SERIAL, use_mock)
+        gas_usage = get_gas_usage(GAS_MPRN, GAS_SERIAL, use_mock)
+        return {
+            'electricity_data': electricity_data,
+            'gas_usage': gas_usage,
+            'date': target_day_start,
+            'days_ago': days_ago
+        }
+
+    # Fetch electricity data for specific day
+    endpoint_elec = f"/v1/electricity-meter-points/{ELECTRICITY_MPAN}/meters/{ELECTRICITY_SERIAL}/consumption/"
+    params_elec = {
+        'period_from': target_day_start.isoformat(),
+        'period_to': next_day_start.isoformat(),
+        'page_size': 100
+    }
+
+    data_elec = make_octopus_request(endpoint_elec, params_elec)
+    if data_elec is None:
+        logger.warning(f"Failed to fetch electricity data for {days_ago} days ago")
+        return None
+
+    elec_results = data_elec.get('results', [])
+
+    # Process electricity data
+    if not elec_results:
+        logger.info(f"No electricity readings for {days_ago} days ago")
+        return None
+
+    off_peak_usage = 0.0
+    peak_usage = 0.0
+
+    for reading in elec_results:
+        try:
+            interval_start = datetime.fromisoformat(reading['interval_start'].replace('Z', '+00:00'))
+            consumption = float(reading['consumption'])
+
+            if is_off_peak_period(interval_start):
+                off_peak_usage += consumption
+            else:
+                peak_usage += consumption
+        except (KeyError, ValueError) as e:
+            logger.warning(f"Skipping invalid reading: {e}")
+            continue
+
+    total_usage = off_peak_usage + peak_usage
+
+    electricity_data = {
+        'off_peak_usage': round(off_peak_usage, 2),
+        'peak_usage': round(peak_usage, 2),
+        'total_usage': round(total_usage, 2)
+    }
+
+    # Fetch gas data for specific day
+    endpoint_gas = f"/v1/gas-meter-points/{GAS_MPRN}/meters/{GAS_SERIAL}/consumption/"
+    params_gas = {
+        'period_from': target_day_start.isoformat(),
+        'period_to': next_day_start.isoformat(),
+        'page_size': 100
+    }
+
+    data_gas = make_octopus_request(endpoint_gas, params_gas)
+    if data_gas is None:
+        logger.warning(f"Failed to fetch gas data for {days_ago} days ago")
+        return None
+
+    gas_results = data_gas.get('results', [])
+
+    # Process gas data
+    if not gas_results:
+        logger.info(f"No gas readings for {days_ago} days ago")
+        gas_usage = 0.0
+    else:
+        total_consumption_m3 = sum(float(reading['consumption']) for reading in gas_results)
+        total_consumption_kwh = total_consumption_m3 * GAS_M3_TO_KWH
+        gas_usage = round(total_consumption_kwh, 2) if total_consumption_kwh > 0 else 0.0
+
+    # Check if we have meaningful data (at least one of electricity or gas should be non-zero)
+    if electricity_data['total_usage'] == 0 and gas_usage == 0:
+        logger.info(f"Both electricity and gas usage are zero for {days_ago} days ago")
+        return None
+
+    logger.info(f"Successfully fetched data for {days_ago} days ago - Electricity: {electricity_data['total_usage']:.2f} kWh, Gas: {gas_usage:.2f} kWh")
+
+    return {
+        'electricity_data': electricity_data,
+        'gas_usage': gas_usage,
+        'date': target_day_start,
+        'days_ago': days_ago
+    }
+
+
+def get_energy_data_with_fallback(use_mock: bool = False) -> Optional[Dict[str, Any]]:
+    """
+    Get energy data with smart fallback: tries yesterday first, then 2 days ago.
+    Ensures both electricity and gas data are from the same day.
+
+    Args:
+        use_mock: If True, return mock data for testing
+
+    Returns:
+        Dictionary with electricity_data, gas_usage, date, and days_ago, or None if no data available
+    """
+    # Try yesterday first
+    logger.info("Attempting to fetch data for yesterday...")
+    data = fetch_energy_data_for_day(1, use_mock)
+
+    if data is not None:
+        logger.info("Using yesterday's data")
+        return data
+
+    # Fall back to 2 days ago
+    logger.info("Yesterday's data insufficient, trying 2 days ago...")
+    data = fetch_energy_data_for_day(2, use_mock)
+
+    if data is not None:
+        logger.info("Using data from 2 days ago")
+        return data
+
+    logger.warning("No sufficient data available for yesterday or 2 days ago")
+    return None
+
+
 @app.route('/')
 def index():
     """Home page with test links and current tariff information."""
@@ -506,32 +661,47 @@ def energy_data():
 def trmnl_display():
     """
     TRMNL JSON endpoint - returns flat JSON data for TRMNL markup templates.
-    
+    Uses smart fallback: tries yesterday's data first, then 2 days ago if unavailable.
+
     Query Parameters:
         mock (str): Set to 'true' to return mock data for testing
-        
+
     Returns:
         JSON object with flat structure suitable for TRMNL templates
     """
     use_mock = validate_mock_param(request.args.get('mock', 'false'))
-    
-    yesterday = datetime.now(timezone.utc) - timedelta(days=1)
-    date_str = yesterday.strftime("%d %b %Y")
-    
-    electricity_data = get_electricity_usage_by_time(ELECTRICITY_MPAN, ELECTRICITY_SERIAL, use_mock)
-    gas_usage = get_gas_usage(GAS_MPRN, GAS_SERIAL, use_mock)
-    
-    if electricity_data is None or gas_usage is None:
+
+    # Get energy data with smart fallback
+    energy_data = get_energy_data_with_fallback(use_mock)
+
+    if energy_data is None:
+        # If no data available, show error with yesterday's date as fallback
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        date_str = yesterday.strftime("%d %b %Y")
         response_data = {
             "date": date_str,
             "error": "Failed to fetch data from Octopus Energy API",
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
     else:
+        electricity_data = energy_data['electricity_data']
+        gas_usage = energy_data['gas_usage']
+        data_date = energy_data['date']
+        days_ago = energy_data['days_ago']
+
+        # Format date string with clear indicator
+        date_str = data_date.strftime("%d %b %Y")
+        if days_ago == 1:
+            date_label = f"{date_str} (Yesterday)"
+        elif days_ago == 2:
+            date_label = f"{date_str} (2 days ago)"
+        else:
+            date_label = date_str
+
         costs = calculate_costs(electricity_data, gas_usage)
-        
+
         response_data = {
-            "date": date_str,
+            "date": date_label,
             "electricity_off_peak_usage": electricity_data['off_peak_usage'],
             "electricity_off_peak_cost": f"{costs['off_peak_cost']:.2f}",
             "electricity_peak_usage": electricity_data['peak_usage'],
@@ -545,14 +715,15 @@ def trmnl_display():
             "gas_standing_charge": f"{STANDING_CHARGE_GAS:.2f}",
             "total_cost": f"{costs['total_cost']:.2f}",
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "mock_data": use_mock
+            "mock_data": use_mock,
+            "data_age_days": days_ago
         }
-    
+
     response = make_response(jsonify(response_data))
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
-    
+
     return response
 
 
